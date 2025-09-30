@@ -3,13 +3,14 @@
 import { ProtectedRoute } from "@/components/auth/protected-route"
 import { StreamControls } from "@/components/publisher/stream-controls"
 import { StreamHistory } from "@/components/publisher/stream-history"
+import { PublisherStreamManagement } from "@/components/publisher/stream-management"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { signOut } from "@/lib/auth"
 import { useAuth } from "@/hooks/use-auth"
 import { useRouter } from "next/navigation"
 import { useState } from "react"
-import { Podcast as Broadcast, History, LogOut, Monitor } from "lucide-react"
+import { Podcast as Broadcast, History, LogOut, Monitor, Settings } from "lucide-react"
 import type { StreamSession } from "@/lib/streaming"
 import { PublisherZoomCalls } from "@/components/publisher/zoom-calls"
 
@@ -68,10 +69,14 @@ export default function PublisherDashboard() {
         {/* Main Content */}
         <main className="container mx-auto px-4 py-8">
           <Tabs defaultValue="stream" className="space-y-6">
-            <TabsList className="grid w-full grid-cols-3">
+            <TabsList className="grid w-full grid-cols-4">
               <TabsTrigger value="stream" className="flex items-center space-x-2">
                 <Monitor className="h-4 w-4" />
                 <span>Stream Control</span>
+              </TabsTrigger>
+              <TabsTrigger value="manage" className="flex items-center space-x-2">
+                <Settings className="h-4 w-4" />
+                <span>Stream Management</span>
               </TabsTrigger>
               <TabsTrigger value="zoom" className="flex items-center space-x-2">
                 <span>Zoom Calls</span>
@@ -84,6 +89,10 @@ export default function PublisherDashboard() {
 
             <TabsContent value="stream" forceMount>
               <StreamControls onStreamStart={handleStreamStart} onStreamEnd={handleStreamEnd} />
+            </TabsContent>
+
+            <TabsContent value="manage">
+              <PublisherStreamManagement />
             </TabsContent>
 
             <TabsContent value="zoom">
