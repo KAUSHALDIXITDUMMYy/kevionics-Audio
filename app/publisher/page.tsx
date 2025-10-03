@@ -10,9 +10,10 @@ import { signOut } from "@/lib/auth"
 import { useAuth } from "@/hooks/use-auth"
 import { useRouter } from "next/navigation"
 import { useState } from "react"
-import { Podcast as Broadcast, History, LogOut, Monitor, Settings } from "lucide-react"
+import { Podcast as Broadcast, History, LogOut, Monitor, Settings, BarChart3 } from "lucide-react"
 import type { StreamSession } from "@/lib/streaming"
 import { PublisherZoomCalls } from "@/components/publisher/zoom-calls"
+import { PublisherAnalytics } from "@/components/publisher/publisher-analytics"
 
 export default function PublisherDashboard() {
   const { userProfile } = useAuth()
@@ -69,7 +70,7 @@ export default function PublisherDashboard() {
         {/* Main Content */}
         <main className="container mx-auto px-4 py-8">
           <Tabs defaultValue="stream" className="space-y-6">
-            <TabsList className="grid w-full grid-cols-4">
+            <TabsList className="grid w-full grid-cols-5">
               <TabsTrigger value="stream" className="flex items-center space-x-2">
                 <Monitor className="h-4 w-4" />
                 <span>Stream Control</span>
@@ -84,6 +85,10 @@ export default function PublisherDashboard() {
               <TabsTrigger value="history" className="flex items-center space-x-2">
                 <History className="h-4 w-4" />
                 <span>Stream History</span>
+              </TabsTrigger>
+              <TabsTrigger value="analytics" className="flex items-center space-x-2">
+                <BarChart3 className="h-4 w-4" />
+                <span>Analytics</span>
               </TabsTrigger>
             </TabsList>
 
@@ -101,6 +106,9 @@ export default function PublisherDashboard() {
 
             <TabsContent value="history">
               <StreamHistory />
+            </TabsContent>
+            <TabsContent value="analytics">
+              <PublisherAnalytics />
             </TabsContent>
           </Tabs>
         </main>

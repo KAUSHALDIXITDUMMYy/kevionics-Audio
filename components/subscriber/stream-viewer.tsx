@@ -6,6 +6,8 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { agoraManager } from "@/lib/agora"
+import { createViewerSession, endViewerSession } from "@/lib/analytics"
+import { useAuth } from "@/hooks/use-auth"
 import type { SubscriberPermission } from "@/lib/subscriber"
 import { Play, Square, Volume2, VolumeX, Video, Users, Clock, Monitor } from "lucide-react"
 
@@ -16,11 +18,13 @@ interface StreamViewerProps {
 }
 
 export function StreamViewer({ permission, onJoinStream, onLeaveStream }: StreamViewerProps) {
+  const { user, userProfile } = useAuth()
   const [isConnected, setIsConnected] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
   const [audioEnabled, setAudioEnabled] = useState(false)
   const [videoEnabled, setVideoEnabled] = useState(false)
+  const [viewerSessionId, setViewerSessionId] = useState<string | null>(null)
   const jitsiContainerRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -28,12 +32,16 @@ export function StreamViewer({ permission, onJoinStream, onLeaveStream }: Stream
       // Cleanup on unmount
       if (isConnected) {
         agoraManager.leave()
+        // End viewer session if it exists
+        if (viewerSessionId) {
+          endViewerSession(viewerSessionId)
+        }
       }
     }
-  }, [isConnected])
+  }, [isConnected, viewerSessionId])
 
   const handleJoinStream = async () => {
-    if (!permission.streamSession || !jitsiContainerRef.current) return
+    if (!permission.streamSession || !jitsiContainerRef.current || !user || !userProfile) return
 
     setLoading(true)
     setError("")
@@ -53,16 +61,39 @@ export function StreamViewer({ permission, onJoinStream, onLeaveStream }: Stream
 
       setAudioEnabled(true) // Start with audio enabled for audio-only mode
       setVideoEnabled(false)
+
+      // Create viewer session for analytics
+      const sessionResult = await createViewerSession({
+        subscriberId: user.uid,
+        subscriberName: userProfile.displayName || userProfile.email || "Unknown",
+        subscriberEmail: userProfile.email || "",
+        publisherId: permission.publisherId,
+        publisherName: permission.publisherName,
+        streamId: permission.streamSession.id!,
+        streamTitle: permission.streamSession.title,
+        roomId: permission.streamSession.roomId,
+      })
+
+      if (sessionResult.success && sessionResult.id) {
+        setViewerSessionId(sessionResult.id)
+      }
     } catch (err: any) {
       setError(err.message || "Failed to join stream")
       setLoading(false)
     }
   }
 
-  const handleLeaveStream = () => {
+  const handleLeaveStream = async () => {
     agoraManager.leave()
     setIsConnected(false)
     setLoading(false)
+    
+    // End viewer session for analytics
+    if (viewerSessionId) {
+      await endViewerSession(viewerSessionId)
+      setViewerSessionId(null)
+    }
+    
     onLeaveStream?.()
   }
 

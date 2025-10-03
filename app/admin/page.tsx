@@ -10,9 +10,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { signOut } from "@/lib/auth"
 import { useAuth } from "@/hooks/use-auth"
 import { useRouter } from "next/navigation"
-import { Settings, Users, Shield, LogOut, Activity, Video } from "lucide-react"
+import { Settings, Users, Shield, LogOut, Activity, Video, BarChart3 } from "lucide-react"
 import { SubscriberAssignments } from "@/components/admin/subscriber-assignments"
 import { ZoomAssignmentsAdmin } from "@/components/admin/zoom-assignments"
+import { AdminAnalytics } from "@/components/admin/admin-analytics"
 
 export default function AdminDashboard() {
   const { userProfile } = useAuth()
@@ -50,7 +51,7 @@ export default function AdminDashboard() {
         {/* Main Content */}
         <main className="container mx-auto px-4 py-8">
           <Tabs defaultValue="users" className="space-y-6">
-            <TabsList className="grid w-full grid-cols-6">
+            <TabsList className="grid w-full grid-cols-7">
               <TabsTrigger value="users" className="flex items-center space-x-2">
                 <Users className="h-4 w-4" />
                 <span>User Management</span>
@@ -73,6 +74,10 @@ export default function AdminDashboard() {
               </TabsTrigger>
               <TabsTrigger value="zoom-calls" className="flex items-center space-x-2">
                 <span>Zoom Assignments</span>
+              </TabsTrigger>
+              <TabsTrigger value="analytics" className="flex items-center space-x-2">
+                <BarChart3 className="h-4 w-4" />
+                <span>Analytics</span>
               </TabsTrigger>
             </TabsList>
 
@@ -97,6 +102,9 @@ export default function AdminDashboard() {
             </TabsContent>
             <TabsContent value="zoom-calls">
               <ZoomAssignmentsAdmin />
+            </TabsContent>
+            <TabsContent value="analytics">
+              <AdminAnalytics />
             </TabsContent>
           </Tabs>
         </main>
