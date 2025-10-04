@@ -40,6 +40,22 @@ export function StreamViewer({ permission, onJoinStream, onLeaveStream }: Stream
     }
   }, [isConnected, viewerSessionId])
 
+  // Sync audio state with Agora manager
+  useEffect(() => {
+    if (isConnected) {
+      const syncAudio = () => {
+        const agoraAudioState = agoraManager.isAudioEnabled()
+        if (agoraAudioState !== audioEnabled) {
+          setAudioEnabled(agoraAudioState)
+        }
+      }
+      
+      // Check audio state periodically
+      const interval = setInterval(syncAudio, 2000)
+      return () => clearInterval(interval)
+    }
+  }, [isConnected, audioEnabled])
+
   const handleJoinStream = async () => {
     if (!permission.streamSession || !jitsiContainerRef.current || !user || !userProfile) return
 
@@ -59,8 +75,14 @@ export function StreamViewer({ permission, onJoinStream, onLeaveStream }: Stream
       setLoading(false)
       onJoinStream?.(permission)
 
-      setAudioEnabled(true) // Start with audio enabled for audio-only mode
+      // Start with audio enabled for audio-only mode
+      setAudioEnabled(true)
       setVideoEnabled(false)
+      
+      // Ensure audio is enabled in Agora manager
+      setTimeout(() => {
+        agoraManager.setAudioEnabled(true)
+      }, 1000) // Small delay to ensure tracks are ready
 
       // Create viewer session for analytics
       const sessionResult = await createViewerSession({
@@ -101,9 +123,9 @@ export function StreamViewer({ permission, onJoinStream, onLeaveStream }: Stream
     if (!permission.allowAudio) return
 
     try {
-      // Toggle audio playback for the subscriber
-      setAudioEnabled(!audioEnabled)
-      // Note: In audio-only mode, this controls whether the subscriber hears the shared screen audio
+      const newAudioState = !audioEnabled
+      await agoraManager.setAudioEnabled(newAudioState)
+      setAudioEnabled(newAudioState)
     } catch (err: any) {
       setError("Failed to toggle audio")
     }

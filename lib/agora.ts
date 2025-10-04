@@ -18,6 +18,7 @@ export class AgoraManager {
   private localAudio: ILocalAudioTrack | null = null
   private localVideo: ILocalVideoTrack | null = null
   private screenTrack: ILocalVideoTrack | null = null
+  private remoteAudioTracks: Map<string, IRemoteAudioTrack> = new Map()
 
   private async getAgora() {
     if (typeof window === "undefined") throw new Error("Agora can only be used in the browser")
@@ -61,13 +62,15 @@ export class AgoraManager {
         if (mediaType === "audio") {
           await this.client!.subscribe(user, mediaType)
           const remoteAudioTrack = user.audioTrack as IRemoteAudioTrack
+          this.remoteAudioTracks.set(user.uid.toString(), remoteAudioTrack)
           remoteAudioTrack.play()
         }
         // Skip video tracks - subscribers only hear audio
       })
 
       this.client.on("user-unpublished", (user) => {
-        // No-op; container is controlled by React
+        // Remove audio track when user leaves
+        this.remoteAudioTracks.delete(user.uid.toString())
       })
     }
   }
@@ -96,7 +99,29 @@ export class AgoraManager {
       this.localAudio = null
       this.localVideo = null
       this.screenTrack = null
+      this.remoteAudioTracks.clear()
     }
+  }
+
+  // Control audio for subscribers
+  async setAudioEnabled(enabled: boolean) {
+    this.remoteAudioTracks.forEach((track) => {
+      if (enabled) {
+        track.play()
+      } else {
+        track.stop()
+      }
+    })
+  }
+
+  // Get current audio state
+  isAudioEnabled(): boolean {
+    if (this.remoteAudioTracks.size === 0) return false
+    // Check if any track is playing
+    for (const track of this.remoteAudioTracks.values()) {
+      return track.isPlaying
+    }
+    return false
   }
 
   async startScreenShare(
