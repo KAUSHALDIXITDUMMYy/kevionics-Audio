@@ -11,7 +11,7 @@ import { StreamViewer } from "./stream-viewer"
 import { Monitor, Activity, Gamepad2, Trophy, Users } from "lucide-react"
 
 export function RealTimeStreams() {
-  const { user } = useAuth()
+  const { user, userProfile } = useAuth()
   const [availableStreams, setAvailableStreams] = useState<SubscriberPermission[]>([])
   const [selectedStream, setSelectedStream] = useState<SubscriberPermission | null>(null)
   const [loading, setLoading] = useState(true)
@@ -61,6 +61,28 @@ export function RealTimeStreams() {
 
   const handleBackToList = () => {
     setSelectedStream(null)
+  }
+
+  // Check if user is inactive
+  if (userProfile && !userProfile.isActive) {
+    return (
+      <Card>
+        <CardContent className="flex items-center justify-center p-12">
+          <div className="text-center">
+            <div className="mb-4 p-4 bg-red-100 dark:bg-red-900/20 rounded-full inline-block">
+              <Monitor className="h-16 w-16 text-red-600 dark:text-red-400" />
+            </div>
+            <h3 className="text-2xl font-bold mb-2 text-red-600 dark:text-red-400">Account Inactive</h3>
+            <p className="text-muted-foreground mb-4">
+              Your account has been deactivated by an administrator.
+            </p>
+            <p className="text-sm text-muted-foreground">
+              Please contact your administrator to reactivate your account and regain access to streams.
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+    )
   }
 
   if (loading) {
