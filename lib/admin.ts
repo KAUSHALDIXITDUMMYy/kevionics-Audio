@@ -2,6 +2,8 @@ import { db } from "./firebase"
 import { collection, addDoc, getDocs, doc, updateDoc, deleteDoc, query, where, orderBy } from "firebase/firestore"
 import { signUp, type UserRole } from "./auth"
 
+export type { UserRole } from "./auth"
+
 export interface StreamPermission {
   id?: string
   subscriberId: string
@@ -76,15 +78,6 @@ export const updateUserStatus = async (userId: string, isActive: boolean) => {
   }
 }
 
-export const updatePublisherZoomMapping = async (userId: string, updates: { zoomUserId?: string; zoomUserEmail?: string }) => {
-  try {
-    const userRef = doc(db, "users", userId)
-    await updateDoc(userRef, updates as any)
-    return { success: true }
-  } catch (error: any) {
-    return { success: false, error: error.message }
-  }
-}
 
 export const createStreamPermission = async (permission: Omit<StreamPermission, "id" | "createdAt">) => {
   try {

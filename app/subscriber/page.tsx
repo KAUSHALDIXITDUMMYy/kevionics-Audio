@@ -2,13 +2,11 @@
 
 import { ProtectedRoute } from "@/components/auth/protected-route"
 import { RealTimeStreams } from "@/components/subscriber/real-time-streams"
-import { SubscriberZoomCalls } from "@/components/subscriber/zoom-calls"
 import { Button } from "@/components/ui/button"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { signOut } from "@/lib/auth"
 import { useAuth } from "@/hooks/use-auth"
 import { useRouter } from "next/navigation"
-import { Monitor, LogOut, Headphones } from "lucide-react"
+import { Monitor, LogOut } from "lucide-react"
 
 export default function SubscriberDashboard() {
   const { userProfile } = useAuth()
@@ -45,26 +43,7 @@ export default function SubscriberDashboard() {
 
         {/* Main Content */}
         <main className="container mx-auto px-4 py-8">
-          <Tabs defaultValue="streams" className="space-y-6">
-            <TabsList className="grid w-full grid-cols-2">
-              <TabsTrigger value="streams" className="flex items-center space-x-2">
-                <Monitor className="h-4 w-4" />
-                <span>Streams</span>
-              </TabsTrigger>
-              <TabsTrigger value="zoom" className="flex items-center space-x-2">
-                <Headphones className="h-4 w-4" />
-                <span>Zoom Calls</span>
-              </TabsTrigger>
-            </TabsList>
-
-            <TabsContent value="streams">
-              <RealTimeStreams />
-            </TabsContent>
-
-            <TabsContent value="zoom">
-              <SubscriberZoomCalls />
-            </TabsContent>
-          </Tabs>
+          <RealTimeStreams />
         </main>
       </div>
     </ProtectedRoute>

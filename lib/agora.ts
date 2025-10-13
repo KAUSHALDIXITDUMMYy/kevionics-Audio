@@ -17,8 +17,8 @@ export class AgoraManager {
   private client: IAgoraRTCClient | null = null
   private localAudio: ILocalAudioTrack | null = null
   private localVideo: ILocalVideoTrack | null = null
-  private screenTrack: ILocalVideoTrack | null = null
-  private remoteAudioTracks: Map<string, IRemoteAudioTrack> = new Map()
+  private screenVideoTrack: ILocalVideoTrack | null = null
+  private screenAudioTrack: ILocalAudioTrack | null = null
 
   private async getAgora() {
     if (typeof window === "undefined") throw new Error("Agora can only be used in the browser")
@@ -59,18 +59,19 @@ export class AgoraManager {
     } else {
       // Audience: subscribe only to audio tracks (audio-only mode)
       this.client.on("user-published", async (user, mediaType) => {
+        console.log("[Agora] user-published:", user.uid, mediaType)
         if (mediaType === "audio") {
           await this.client!.subscribe(user, mediaType)
           const remoteAudioTrack = user.audioTrack as IRemoteAudioTrack
-          this.remoteAudioTracks.set(user.uid.toString(), remoteAudioTrack)
+          console.log("[Agora] Playing audio from user:", user.uid)
           remoteAudioTrack.play()
         }
         // Skip video tracks - subscribers only hear audio
       })
 
       this.client.on("user-unpublished", (user) => {
-        // Remove audio track when user leaves
-        this.remoteAudioTracks.delete(user.uid.toString())
+        console.log("[Agora] user-unpublished:", user.uid)
+        // No-op; container is controlled by React
       })
     }
   }
@@ -86,42 +87,34 @@ export class AgoraManager {
         this.localVideo.close()
       }
       if (this.client) {
-        if (this.screenTrack) {
+        // Unpublish screen tracks if they exist
+        if (this.screenVideoTrack || this.screenAudioTrack) {
           try {
-            await this.client.unpublish([this.screenTrack] as any)
+            const tracksToUnpublish: any[] = []
+            if (this.screenVideoTrack) tracksToUnpublish.push(this.screenVideoTrack)
+            if (this.screenAudioTrack) tracksToUnpublish.push(this.screenAudioTrack)
+            await this.client.unpublish(tracksToUnpublish)
           } catch {}
         }
         await this.client.unpublish().catch(() => {})
         await this.client.leave()
       }
+      // Close tracks
+      if (this.screenVideoTrack) {
+        this.screenVideoTrack.stop()
+        this.screenVideoTrack.close()
+      }
+      if (this.screenAudioTrack) {
+        this.screenAudioTrack.stop()
+        this.screenAudioTrack.close()
+      }
     } finally {
       this.client = null
       this.localAudio = null
       this.localVideo = null
-      this.screenTrack = null
-      this.remoteAudioTracks.clear()
+      this.screenVideoTrack = null
+      this.screenAudioTrack = null
     }
-  }
-
-  // Control audio for subscribers
-  async setAudioEnabled(enabled: boolean) {
-    this.remoteAudioTracks.forEach((track) => {
-      if (enabled) {
-        track.play()
-      } else {
-        track.stop()
-      }
-    })
-  }
-
-  // Get current audio state
-  isAudioEnabled(): boolean {
-    if (this.remoteAudioTracks.size === 0) return false
-    // Check if any track is playing
-    for (const track of this.remoteAudioTracks.values()) {
-      return track.isPlaying
-    }
-    return false
   }
 
   async startScreenShare(
@@ -129,18 +122,17 @@ export class AgoraManager {
     options?: { fullScreen?: boolean; withSystemAudio?: boolean; preferFPS60?: boolean }
   ) {
     if (!this.client) throw new Error("Client not joined")
-    if (this.screenTrack) return
+    if (this.screenVideoTrack || this.screenAudioTrack) return
 
     const fullScreen = options?.fullScreen ?? true
     const withSystemAudio = options?.withSystemAudio ?? true
 
     const AgoraRTC = await this.getAgora()
     
-    // Audio-only mode: Only capture system audio, no video
-    let audioTrack: ILocalAudioTrack | null = null
-    
     try {
-      // Create screen capture with audio only (no video track)
+      console.log("[Agora] Creating screen share with audio...")
+      
+      // Create screen capture with audio
       const screenTracks = await AgoraRTC.createScreenVideoTrack(
         {
           encoderConfig: "1080p_30",
@@ -151,43 +143,64 @@ export class AgoraManager {
       )
       
       if (Array.isArray(screenTracks)) {
-        // We got both video and audio tracks, only use audio
-        this.screenTrack = screenTracks[0] // Keep video track reference for cleanup
-        audioTrack = screenTracks[1] // Use the audio track
+        // We got both video and audio tracks
+        this.screenVideoTrack = screenTracks[0]
+        this.screenAudioTrack = screenTracks[1]
         
-        // Publish only the audio track
-        if (audioTrack) {
-          await this.client.publish([audioTrack] as any)
-        }
+        console.log("[Agora] Got both video and audio tracks")
+        console.log("[Agora] Publishing ONLY audio track...")
         
-        // Audio-only mode: don't show video, container will be handled by React
+        // CRITICAL: Publish ONLY the audio track (this is what worked originally!)
+        await this.client.publish([this.screenAudioTrack] as any)
+        
+        console.log("[Agora] Audio track published successfully")
       } else {
-        // Only got video track, try to get system audio separately
-        this.screenTrack = screenTracks
+        // Only got video track
+        this.screenVideoTrack = screenTracks
+        console.log("[Agora] Only got video track, trying microphone as fallback...")
         // For audio-only mode, we'll create a microphone track to capture system audio
-        audioTrack = await AgoraRTC.createMicrophoneAudioTrack()
-        await this.client.publish([audioTrack] as any)
-        // Audio-only mode: don't show video, container will be handled by React
+        this.localAudio = await AgoraRTC.createMicrophoneAudioTrack()
+        await this.client.publish([this.localAudio] as any)
       }
     } catch (error) {
+      console.error("[Agora] Screen share failed:", error)
       // Fallback: create microphone track for system audio
-      audioTrack = await AgoraRTC.createMicrophoneAudioTrack()
-      await this.client.publish([audioTrack] as any)
-      // Audio-only mode: don't show video, container will be handled by React
+      try {
+        console.log("[Agora] Using microphone as audio fallback...")
+        this.localAudio = await AgoraRTC.createMicrophoneAudioTrack()
+        await this.client.publish([this.localAudio] as any)
+      } catch (fallbackError) {
+        console.error("[Agora] Fallback failed:", fallbackError)
+        throw error
+      }
     }
   }
   
 
   async stopScreenShare() {
-    if (!this.client || !this.screenTrack) return
+    if (!this.client) return
+    
     try {
-      await this.client.unpublish([this.screenTrack] as any)
-    } catch {}
+      // Unpublish audio track
+      if (this.screenAudioTrack) {
+        await this.client.unpublish([this.screenAudioTrack])
+        this.screenAudioTrack.stop()
+        this.screenAudioTrack.close()
+        this.screenAudioTrack = null
+      }
+    } catch (e) {
+      console.error("[Agora] Error stopping screen audio:", e)
+    }
+    
     try {
-      this.screenTrack.stop()
-      this.screenTrack.close()
-    } finally {
-      this.screenTrack = null
+      // Close video track (wasn't published)
+      if (this.screenVideoTrack) {
+        this.screenVideoTrack.stop()
+        this.screenVideoTrack.close()
+        this.screenVideoTrack = null
+      }
+    } catch (e) {
+      console.error("[Agora] Error closing screen video:", e)
     }
   }
 

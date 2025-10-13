@@ -12,8 +12,8 @@ import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Switch } from "@/components/ui/switch"
-import { createUser, getAllUsers, updateUserStatus, updatePublisherZoomMapping, type UserRole } from "@/lib/admin"
-import type { UserProfile } from "@/lib/auth"
+import { createUser, getAllUsers, updateUserStatus } from "@/lib/admin"
+import type { UserProfile, UserRole } from "@/lib/auth"
 import { Plus, Users, UserCheck, UserX } from "lucide-react"
 
 export function UserManagement() {
@@ -23,6 +23,7 @@ export function UserManagement() {
   const [createLoading, setCreateLoading] = useState(false)
   const [error, setError] = useState("")
   const [success, setSuccess] = useState("")
+  const [roleFilter, setRoleFilter] = useState<UserRole | "all">("all")
 
   // Create user form state
   const [email, setEmail] = useState("")
@@ -101,6 +102,11 @@ export function UserManagement() {
   }
 
   const stats = getStats()
+
+  // Filter users based on selected role
+  const filteredUsers = roleFilter === "all" 
+    ? users 
+    : users.filter(user => user.role === roleFilter)
 
   if (loading) {
     return (
@@ -247,11 +253,36 @@ export function UserManagement() {
       {/* Users Table */}
       <Card>
         <CardHeader>
-          <CardTitle>All Users</CardTitle>
-          <CardDescription>Manage existing users and their permissions</CardDescription>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle>All Users</CardTitle>
+              <CardDescription>Manage existing users and their permissions</CardDescription>
+            </div>
+            <div className="flex items-center space-x-2">
+              <Label htmlFor="roleFilter" className="text-sm font-medium">
+                Filter by Role:
+              </Label>
+              <Select value={roleFilter} onValueChange={(value: UserRole | "all") => setRoleFilter(value)}>
+                <SelectTrigger className="w-[180px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Users ({users.length})</SelectItem>
+                  <SelectItem value="admin">Admins ({stats.byRole.admin || 0})</SelectItem>
+                  <SelectItem value="publisher">Publishers ({stats.byRole.publisher || 0})</SelectItem>
+                  <SelectItem value="subscriber">Subscribers ({stats.byRole.subscriber || 0})</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
         </CardHeader>
         <CardContent>
-          <Table>
+          {filteredUsers.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground">
+              No users found for the selected filter.
+            </div>
+          ) : (
+            <Table>
             <TableHeader>
               <TableRow>
                 <TableHead>Email</TableHead>
@@ -259,12 +290,11 @@ export function UserManagement() {
                 <TableHead>Role</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Created</TableHead>
-                <TableHead>Zoom User</TableHead>
                 <TableHead>Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {users.map((user) => (
+              {filteredUsers.map((user) => (
                 <TableRow key={user.id}>
                   <TableCell className="font-medium">{user.email}</TableCell>
                   <TableCell>{user.displayName || "-"}</TableCell>
@@ -285,30 +315,6 @@ export function UserManagement() {
                   </TableCell>
                   <TableCell>{new Date(user.createdAt).toLocaleDateString()}</TableCell>
                   <TableCell>
-                    {user.role === "publisher" ? (
-                      <div className="flex flex-col gap-2 min-w-[260px]">
-                        <Input
-                          placeholder="Zoom user ID"
-                          defaultValue={(user as any).zoomUserId || ""}
-                          onBlur={async (e) => {
-                            const value = e.currentTarget.value.trim()
-                            await updatePublisherZoomMapping(user.id, { zoomUserId: value || undefined })
-                          }}
-                        />
-                        <Input
-                          placeholder="Zoom user email"
-                          defaultValue={(user as any).zoomUserEmail || ""}
-                          onBlur={async (e) => {
-                            const value = e.currentTarget.value.trim()
-                            await updatePublisherZoomMapping(user.id, { zoomUserEmail: value || undefined })
-                          }}
-                        />
-                      </div>
-                    ) : (
-                      <span className="text-muted-foreground">—</span>
-                    )}
-                  </TableCell>
-                  <TableCell>
                     <Switch
                       checked={user.isActive}
                       onCheckedChange={() => handleToggleUserStatus(user.id, user.isActive)}
@@ -318,6 +324,10 @@ export function UserManagement() {
               ))}
             </TableBody>
           </Table>
+          )}
+          <div className="mt-4 text-sm text-muted-foreground">
+            Showing {filteredUsers.length} of {users.length} users
+          </div>
         </CardContent>
       </Card>
     </div>
