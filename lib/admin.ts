@@ -81,6 +81,19 @@ export const updateUserStatus = async (userId: string, isActive: boolean) => {
 
 export const createStreamPermission = async (permission: Omit<StreamPermission, "id" | "createdAt">) => {
   try {
+    // Check if permission already exists
+    const permissionsRef = collection(db, "streamPermissions")
+    const q = query(
+      permissionsRef,
+      where("publisherId", "==", permission.publisherId),
+      where("subscriberId", "==", permission.subscriberId)
+    )
+    const existingSnapshot = await getDocs(q)
+    
+    if (!existingSnapshot.empty) {
+      throw new Error("Permission already exists")
+    }
+
     const permissionData = {
       ...permission,
       createdAt: new Date(),

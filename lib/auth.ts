@@ -6,7 +6,7 @@ import {
   onAuthStateChanged,
   type User,
 } from "firebase/auth"
-import { doc, setDoc, getDoc, updateDoc } from "firebase/firestore"
+import { doc, setDoc, getDoc, updateDoc, getDocFromServer } from "firebase/firestore"
 
 export type UserRole = "admin" | "publisher" | "subscriber"
 
@@ -38,8 +38,12 @@ export const signIn = async (email: string, password: string) => {
     const userDoc = await getDoc(userRef)
     const userData = userDoc.data() as UserProfile
     
+    console.log("[SignIn] User role:", userData?.role, "UID:", result.user.uid)
+    
     // Only enforce single session for subscribers
     if (userData?.role === "subscriber") {
+      console.log("[SignIn] Setting session ID for subscriber:", sessionId)
+      
       await updateDoc(userRef, {
         currentSessionId: sessionId,
         lastLoginAt: new Date(),
@@ -48,11 +52,13 @@ export const signIn = async (email: string, password: string) => {
       // Store session ID in localStorage to track this session
       if (typeof window !== "undefined") {
         localStorage.setItem(`session_${result.user.uid}`, sessionId)
+        console.log("[SignIn] Session ID stored in localStorage")
       }
     }
     
     return { user: result.user, error: null }
   } catch (error: any) {
+    console.error("[SignIn] Error:", error)
     return { user: null, error: error.message }
   }
 }
@@ -99,7 +105,8 @@ export const isSessionValid = async (uid: string): Promise<boolean> => {
     if (typeof window === "undefined") return true
     
     const userRef = doc(db, "users", uid)
-    const userDoc = await getDoc(userRef)
+    // Force fetch from server to avoid cache issues
+    const userDoc = await getDocFromServer(userRef)
     
     if (!userDoc.exists()) return false
     
@@ -110,6 +117,8 @@ export const isSessionValid = async (uid: string): Promise<boolean> => {
     
     const storedSessionId = localStorage.getItem(`session_${uid}`)
     const currentSessionId = userData.currentSessionId
+    
+    console.log("[Session Check] Stored:", storedSessionId, "Current:", currentSessionId)
     
     // If no session ID is set yet, consider it valid
     if (!currentSessionId) return true

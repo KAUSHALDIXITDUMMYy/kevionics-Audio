@@ -78,13 +78,15 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       }
     }
 
-    // Check immediately
-    checkSession()
-
-    // Then check every 10 seconds
+    // Don't check immediately - wait a bit to avoid race condition with Firestore updates
+    // Start checking after 15 seconds, then every 10 seconds
+    const initialTimeout = setTimeout(checkSession, 15000)
     const interval = setInterval(checkSession, 10000)
 
-    return () => clearInterval(interval)
+    return () => {
+      clearTimeout(initialTimeout)
+      clearInterval(interval)
+    }
   }, [user, userProfile])
 
   return <AuthContext.Provider value={{ user, userProfile, loading }}>{children}</AuthContext.Provider>
