@@ -717,53 +717,96 @@ export function SubscriberAssignments() {
                 />
               </div>
               
-              <ScrollArea className="h-[600px]">
-                <div className="overflow-x-auto">
-                  <table className="w-full border-collapse">
-                    <thead className="sticky top-0 bg-background z-10">
-                      <tr>
-                        <th className="border p-2 text-left bg-muted font-semibold min-w-[200px]">
-                          Subscriber \ Publisher
-                        </th>
-                        {filteredPublishers.map((p) => (
-                          <th
-                            key={p.id}
-                            className="border p-2 text-left bg-muted font-medium min-w-[150px]"
-                          >
-                            <div className="truncate text-xs" title={p.displayName || p.email}>
+              <div 
+                className="border rounded-lg overflow-auto" 
+                style={{ 
+                  maxHeight: '600px',
+                  overflowX: 'auto',
+                  overflowY: 'auto'
+                }}
+              >
+                <table className="border-collapse w-full">
+                  <thead className="sticky top-0 bg-background z-10 shadow-sm">
+                    <tr>
+                      <th className="border p-3 text-left bg-muted font-semibold sticky left-0 z-20 min-w-[220px] shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
+                        <div className="flex items-center gap-2">
+                          <Users className="h-4 w-4" />
+                          <span>Subscriber</span>
+                        </div>
+                      </th>
+                      {filteredPublishers.map((p, index) => (
+                        <th
+                          key={p.id}
+                          className="border p-3 text-left bg-muted font-medium whitespace-nowrap"
+                          style={{ minWidth: '160px' }}
+                        >
+                          <div className="flex flex-col gap-1">
+                            <div className="flex items-center gap-1.5">
+                              <Video className="h-3.5 w-3.5 text-purple-600 dark:text-purple-400" />
+                              <span className="text-xs font-semibold">Publisher {index + 1}</span>
+                            </div>
+                            <div className="text-xs font-normal truncate max-w-[140px]" title={p.displayName || p.email}>
                               {p.displayName || p.email}
                             </div>
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filteredSubscribers.map((s) => (
-                        <tr key={s.id} className="hover:bg-muted/50">
-                          <td className="border p-2 font-medium bg-muted/50">
-                            <div className="truncate text-sm" title={s.displayName || s.email}>
+                            <Badge variant={p.isActive ? "default" : "outline"} className="text-[10px] w-fit px-1 py-0">
+                              {p.isActive ? "Active" : "Inactive"}
+                            </Badge>
+                          </div>
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredSubscribers.map((s, sIndex) => (
+                      <tr key={s.id} className="hover:bg-muted/50 transition-colors">
+                        <td className="border p-3 font-medium bg-muted/30 sticky left-0 z-10 min-w-[220px] shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
+                          <div className="flex flex-col gap-1">
+                            <div className="flex items-center gap-1.5">
+                              <Users className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400" />
+                              <span className="text-xs font-semibold">Subscriber {sIndex + 1}</span>
+                            </div>
+                            <div className="text-sm font-medium truncate max-w-[180px]" title={s.displayName || s.email}>
                               {s.displayName || s.email}
                             </div>
-                          </td>
-                          {filteredPublishers.map((p) => {
-                            const assigned = isAssigned(s.id, p.id)
-                            return (
-                              <td key={p.id} className="border p-2 text-center">
-                                <div className="flex items-center justify-center">
-                                  <Checkbox
-                                    checked={assigned}
-                                    onCheckedChange={(v) => toggleAssignment(s.id, p.id, Boolean(v))}
-                                  />
-                                </div>
-                              </td>
-                            )
-                          })}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </ScrollArea>
+                            <div className="text-xs text-muted-foreground truncate max-w-[180px]" title={s.email}>
+                              {s.email}
+                            </div>
+                          </div>
+                        </td>
+                        {filteredPublishers.map((p) => {
+                          const assigned = isAssigned(s.id, p.id)
+                          return (
+                            <td 
+                              key={p.id} 
+                              className={`border p-3 text-center ${assigned ? 'bg-green-50 dark:bg-green-950/20' : ''}`}
+                              style={{ minWidth: '160px' }}
+                            >
+                              <div className="flex items-center justify-center">
+                                <Checkbox
+                                  checked={assigned}
+                                  onCheckedChange={(v) => toggleAssignment(s.id, p.id, Boolean(v))}
+                                  className="h-5 w-5"
+                                />
+                              </div>
+                            </td>
+                          )
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              
+              {/* Scrolling Hint */}
+              {filteredPublishers.length > 4 && (
+                <Alert className="mt-3 border-blue-200 bg-blue-50 dark:bg-blue-950/30">
+                  <ArrowRightLeft className="h-4 w-4 text-blue-600" />
+                  <AlertDescription className="text-blue-800 dark:text-blue-200">
+                    <strong>📜 How to scroll:</strong> Use the <strong>horizontal scrollbar at the bottom</strong> of the table to see all {filteredPublishers.length} publishers. 
+                    You can also try <strong>Shift + Mouse Wheel</strong> or <strong>trackpad swipe</strong>. The subscriber column stays fixed while you scroll!
+                  </AlertDescription>
+                </Alert>
+              )}
             </div>
           </CardContent>
         </Card>
