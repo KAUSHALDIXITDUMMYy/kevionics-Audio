@@ -24,12 +24,6 @@ export function ProtectedRoute({ children, allowedRoles = [], redirectTo = "/" }
         return
       }
 
-      // Check if user is inactive
-      if (userProfile && !userProfile.isActive) {
-        // Don't redirect, just show inactive message in place
-        return
-      }
-
       if (allowedRoles.length > 0 && userProfile && !allowedRoles.includes(userProfile.role)) {
         router.push("/unauthorized")
         return
@@ -51,9 +45,6 @@ export function ProtectedRoute({ children, allowedRoles = [], redirectTo = "/" }
   if (!user || (allowedRoles.length > 0 && userProfile && !allowedRoles.includes(userProfile.role))) {
     return null
   }
-
-  // If user is inactive, show message in the subscriber component itself (handled in RealTimeStreams)
-  // This allows the protected route to still render, but the actual content will show inactive message
 
   return <>{children}</>
 }

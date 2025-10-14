@@ -40,8 +40,17 @@ export function RealTimePermissions() {
       getUsersByRole("subscriber"),
     ])
 
-    setPublishers(publishersData as (UserProfile & { id: string })[])
-    setSubscribers(subscribersData as (UserProfile & { id: string })[])
+    // Sort alphabetically
+    const sortUsers = (users: any[]) => {
+      return users.sort((a, b) => {
+        const nameA = (a.displayName || a.email).toLowerCase()
+        const nameB = (b.displayName || b.email).toLowerCase()
+        return nameA.localeCompare(nameB)
+      })
+    }
+
+    setPublishers(sortUsers(publishersData as (UserProfile & { id: string })[]))
+    setSubscribers(sortUsers(subscribersData as (UserProfile & { id: string })[]))
   }
 
   const getPublisherName = (publisherId: string) => {

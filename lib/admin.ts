@@ -1,8 +1,6 @@
 import { db } from "./firebase"
-import { collection, addDoc, getDocs, doc, updateDoc, deleteDoc, query, where, orderBy } from "firebase/firestore"
-import { signUp, type UserRole } from "./auth"
-
-export type { UserRole } from "./auth"
+import { collection, addDoc, getDocs, doc, updateDoc, deleteDoc, query, where, orderBy, setDoc } from "firebase/firestore"
+import { type UserRole } from "./auth"
 
 export interface StreamPermission {
   id?: string
@@ -26,8 +24,40 @@ export interface StreamSession {
 
 export const createUser = async (email: string, password: string, role: UserRole, displayName?: string) => {
   try {
-    const result = await signUp(email, password, role, displayName)
-    return result
+    // Create user ONLY in Firestore database (not in Firebase Auth yet)
+    // They will be created in Auth when they log in for the first time
+    
+    // Check if user already exists in Firestore
+    const usersRef = collection(db, "users")
+    const q = query(usersRef, where("email", "==", email))
+    const existingUsers = await getDocs(q)
+    
+    if (!existingUsers.empty) {
+      return { user: null, error: "A user with this email already exists" }
+    }
+
+    // Generate a unique ID for the pending user
+    const pendingUserId = `pending_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`
+    
+    // Create user profile in Firestore with pending status
+    const userProfile = {
+      uid: pendingUserId, // Temporary ID until they log in
+      email: email.toLowerCase(),
+      role,
+      displayName: displayName || email.split("@")[0],
+      createdAt: new Date(),
+      isActive: true,
+      isPending: true, // Flag indicating they need to log in to activate
+      pendingPassword: password, // Store password temporarily (will be removed on first login)
+    }
+
+    await setDoc(doc(db, "users", pendingUserId), userProfile)
+
+    return { 
+      user: { uid: pendingUserId, email } as any, 
+      error: null,
+      message: "User created successfully. They can now log in with their credentials."
+    }
   } catch (error: any) {
     return { user: null, error: error.message }
   }
@@ -68,32 +98,42 @@ export const getUsersByRole = async (role: UserRole) => {
   }
 }
 
-export const updateUserStatus = async (userId: string, isActive: boolean) => {
+export const updateUserStatus = async (userId: string, isActive: boolean, adminEmail?: string, adminId?: string) => {
   try {
     const userRef = doc(db, "users", userId)
-    await updateDoc(userRef, { isActive })
+    const updateData: any = { isActive }
+    
+    // If deactivating, track who did it and when
+    if (!isActive) {
+      updateData.deactivatedBy = adminEmail || "Admin"
+      updateData.deactivatedById = adminId || null
+      updateData.deactivatedAt = new Date()
+    } else {
+      // If reactivating, clear the deactivation data
+      updateData.deactivatedBy = null
+      updateData.deactivatedById = null
+      updateData.deactivatedAt = null
+    }
+    
+    await updateDoc(userRef, updateData)
     return { success: true }
   } catch (error: any) {
     return { success: false, error: error.message }
   }
 }
 
+export const updatePublisherZoomMapping = async (userId: string, updates: { zoomUserId?: string; zoomUserEmail?: string }) => {
+  try {
+    const userRef = doc(db, "users", userId)
+    await updateDoc(userRef, updates as any)
+    return { success: true }
+  } catch (error: any) {
+    return { success: false, error: error.message }
+  }
+}
 
 export const createStreamPermission = async (permission: Omit<StreamPermission, "id" | "createdAt">) => {
   try {
-    // Check if permission already exists
-    const permissionsRef = collection(db, "streamPermissions")
-    const q = query(
-      permissionsRef,
-      where("publisherId", "==", permission.publisherId),
-      where("subscriberId", "==", permission.subscriberId)
-    )
-    const existingSnapshot = await getDocs(q)
-    
-    if (!existingSnapshot.empty) {
-      throw new Error("Permission already exists")
-    }
-
     const permissionData = {
       ...permission,
       createdAt: new Date(),

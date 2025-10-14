@@ -2,7 +2,7 @@
 
 import type React from "react"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -12,18 +12,63 @@ import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Switch } from "@/components/ui/switch"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { createUser, getAllUsers, updateUserStatus } from "@/lib/admin"
 import type { UserProfile, UserRole } from "@/lib/auth"
-import { Plus, Users, UserCheck, UserX } from "lucide-react"
+import { Plus, Users, UserCheck, UserX, Shield, Video, Eye, UserMinus } from "lucide-react"
+import { db } from "@/lib/firebase"
+import { collection, onSnapshot } from "firebase/firestore"
+import { useAuth } from "@/hooks/use-auth"
+
+// Utility function to convert Firestore Timestamp to Date
+const convertTimestampToDate = (timestamp: any): Date | null => {
+  if (!timestamp) return null
+  
+  // If it's already a Date object
+  if (timestamp instanceof Date) {
+    return timestamp
+  }
+  
+  // If it's a Firestore Timestamp with toDate method
+  if (timestamp && typeof timestamp.toDate === 'function') {
+    return timestamp.toDate()
+  }
+  
+  // If it's a Firestore Timestamp object with seconds and nanoseconds
+  if (timestamp && typeof timestamp.seconds === 'number') {
+    return new Date(timestamp.seconds * 1000)
+  }
+  
+  // Try to parse as string or number
+  try {
+    const date = new Date(timestamp)
+    if (!isNaN(date.getTime())) {
+      return date
+    }
+  } catch (e) {
+    console.error('Error converting timestamp:', timestamp, e)
+  }
+  
+  return null
+}
+
+// Utility function to sort users alphabetically
+const sortUsersAlphabetically = (users: (UserProfile & { id: string })[]) => {
+  return [...users].sort((a, b) => {
+    const nameA = (a.displayName || a.email).toLowerCase()
+    const nameB = (b.displayName || b.email).toLowerCase()
+    return nameA.localeCompare(nameB)
+  })
+}
 
 export function UserManagement() {
+  const { userProfile } = useAuth()
   const [users, setUsers] = useState<(UserProfile & { id: string })[]>([])
   const [loading, setLoading] = useState(true)
   const [showCreateForm, setShowCreateForm] = useState(false)
   const [createLoading, setCreateLoading] = useState(false)
   const [error, setError] = useState("")
   const [success, setSuccess] = useState("")
-  const [roleFilter, setRoleFilter] = useState<UserRole | "all">("all")
 
   // Create user form state
   const [email, setEmail] = useState("")
@@ -33,6 +78,33 @@ export function UserManagement() {
 
   useEffect(() => {
     loadUsers()
+    
+    // Set up real-time listener for users
+    const usersRef = collection(db, "users")
+    const unsubscribe = onSnapshot(usersRef, (snapshot) => {
+      const usersData = snapshot.docs.map((doc) => {
+        const data = doc.data()
+        return {
+          id: doc.id,
+          ...data,
+          // Convert Firestore Timestamps to JS Date objects
+          createdAt: convertTimestampToDate(data.createdAt) || new Date(),
+          lastLoginAt: convertTimestampToDate(data.lastLoginAt) || undefined,
+        }
+      }) as (UserProfile & { id: string })[]
+      
+      // Sort by createdAt
+      const sorted = usersData.sort((a: any, b: any) => {
+        const dateA = a.createdAt instanceof Date ? a.createdAt : new Date(a.createdAt)
+        const dateB = b.createdAt instanceof Date ? b.createdAt : new Date(b.createdAt)
+        return dateB.getTime() - dateA.getTime()
+      })
+      
+      setUsers(sorted)
+      setLoading(false)
+    })
+    
+    return () => unsubscribe()
   }, [])
 
   const loadUsers = async () => {
@@ -48,12 +120,12 @@ export function UserManagement() {
     setError("")
     setSuccess("")
 
-    const { user, error: createError } = await createUser(email, password, role, displayName)
+    const result = await createUser(email, password, role, displayName)
 
-    if (createError) {
-      setError(createError)
-    } else if (user) {
-      setSuccess(`User created successfully: ${email}`)
+    if (result.error) {
+      setError(result.error)
+    } else if (result.user) {
+      setSuccess(`User created successfully! ${email} can now log in with their credentials.`)
       setEmail("")
       setPassword("")
       setDisplayName("")
@@ -66,7 +138,9 @@ export function UserManagement() {
   }
 
   const handleToggleUserStatus = async (userId: string, currentStatus: boolean) => {
-    const result = await updateUserStatus(userId, !currentStatus)
+    const adminEmail = userProfile?.email || "Unknown Admin"
+    const adminId = userProfile?.uid || undefined
+    const result = await updateUserStatus(userId, !currentStatus, adminEmail, adminId)
     if (result.success) {
       loadUsers()
     } else {
@@ -87,9 +161,19 @@ export function UserManagement() {
     }
   }
 
+  // Separate and sort users by role and status
+  const usersByRole = useMemo(() => {
+    const admins = sortUsersAlphabetically(users.filter((u) => u.role === "admin"))
+    const publishers = sortUsersAlphabetically(users.filter((u) => u.role === "publisher"))
+    const subscribers = sortUsersAlphabetically(users.filter((u) => u.role === "subscriber"))
+    const inactive = sortUsersAlphabetically(users.filter((u) => !u.isActive && !(u as any).isPending))
+    return { admins, publishers, subscribers, inactive }
+  }, [users])
+
   const getStats = () => {
     const total = users.length
     const active = users.filter((u) => u.isActive).length
+    const inactive = users.filter((u) => !u.isActive && !(u as any).isPending).length
     const byRole = users.reduce(
       (acc, user) => {
         acc[user.role] = (acc[user.role] || 0) + 1
@@ -98,15 +182,10 @@ export function UserManagement() {
       {} as Record<UserRole, number>,
     )
 
-    return { total, active, byRole }
+    return { total, active, inactive, byRole }
   }
 
   const stats = getStats()
-
-  // Filter users based on selected role
-  const filteredUsers = roleFilter === "all" 
-    ? users 
-    : users.filter(user => user.role === roleFilter)
 
   if (loading) {
     return (
@@ -119,7 +198,7 @@ export function UserManagement() {
   return (
     <div className="space-y-6">
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
         <Card>
           <CardContent className="p-4">
             <div className="flex items-center space-x-2">
@@ -139,6 +218,18 @@ export function UserManagement() {
               <div>
                 <p className="text-sm font-medium">Active Users</p>
                 <p className="text-2xl font-bold">{stats.active}</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="p-4">
+            <div className="flex items-center space-x-2">
+              <UserX className="h-4 w-4 text-red-600" />
+              <div>
+                <p className="text-sm font-medium">Inactive Users</p>
+                <p className="text-2xl font-bold">{stats.inactive}</p>
               </div>
             </div>
           </CardContent>
@@ -169,7 +260,7 @@ export function UserManagement() {
           <div className="flex items-center justify-between">
             <div>
               <CardTitle>User Management</CardTitle>
-              <CardDescription>Create and manage user accounts for Kevonics Audio</CardDescription>
+              <CardDescription>Create and manage user accounts for Kevonics Screen Share</CardDescription>
             </div>
             <Button onClick={() => setShowCreateForm(!showCreateForm)}>
               <Plus className="h-4 w-4 mr-2" />
@@ -250,86 +341,201 @@ export function UserManagement() {
         )}
       </Card>
 
-      {/* Users Table */}
+      {/* Users Table with Tabs by Role */}
       <Card>
         <CardHeader>
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle>All Users</CardTitle>
-              <CardDescription>Manage existing users and their permissions</CardDescription>
-            </div>
-            <div className="flex items-center space-x-2">
-              <Label htmlFor="roleFilter" className="text-sm font-medium">
-                Filter by Role:
-              </Label>
-              <Select value={roleFilter} onValueChange={(value: UserRole | "all") => setRoleFilter(value)}>
-                <SelectTrigger className="w-[180px]">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Users ({users.length})</SelectItem>
-                  <SelectItem value="admin">Admins ({stats.byRole.admin || 0})</SelectItem>
-                  <SelectItem value="publisher">Publishers ({stats.byRole.publisher || 0})</SelectItem>
-                  <SelectItem value="subscriber">Subscribers ({stats.byRole.subscriber || 0})</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
+          <CardTitle>Users by Role</CardTitle>
+          <CardDescription>View and manage users organized by their roles (sorted alphabetically)</CardDescription>
         </CardHeader>
         <CardContent>
-          {filteredUsers.length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground">
-              No users found for the selected filter.
-            </div>
-          ) : (
-            <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Email</TableHead>
-                <TableHead>Display Name</TableHead>
-                <TableHead>Role</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Created</TableHead>
-                <TableHead>Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filteredUsers.map((user) => (
-                <TableRow key={user.id}>
-                  <TableCell className="font-medium">{user.email}</TableCell>
-                  <TableCell>{user.displayName || "-"}</TableCell>
-                  <TableCell>
-                    <Badge variant={getRoleBadgeVariant(user.role)}>{user.role}</Badge>
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex items-center space-x-2">
-                      {user.isActive ? (
-                        <UserCheck className="h-4 w-4 text-green-600" />
-                      ) : (
-                        <UserX className="h-4 w-4 text-red-600" />
-                      )}
-                      <span className={user.isActive ? "text-green-600" : "text-red-600"}>
-                        {user.isActive ? "Active" : "Inactive"}
-                      </span>
-                    </div>
-                  </TableCell>
-                  <TableCell>{new Date(user.createdAt).toLocaleDateString()}</TableCell>
-                  <TableCell>
-                    <Switch
-                      checked={user.isActive}
-                      onCheckedChange={() => handleToggleUserStatus(user.id, user.isActive)}
-                    />
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-          )}
-          <div className="mt-4 text-sm text-muted-foreground">
-            Showing {filteredUsers.length} of {users.length} users
-          </div>
+          <Tabs defaultValue="all" className="space-y-4">
+            <TabsList className="grid w-full grid-cols-5">
+              <TabsTrigger value="all" className="flex items-center gap-2">
+                <Users className="h-4 w-4" />
+                All Users ({users.length})
+              </TabsTrigger>
+              <TabsTrigger value="admins" className="flex items-center gap-2">
+                <Shield className="h-4 w-4" />
+                Admins ({usersByRole.admins.length})
+              </TabsTrigger>
+              <TabsTrigger value="publishers" className="flex items-center gap-2">
+                <Video className="h-4 w-4" />
+                Publishers ({usersByRole.publishers.length})
+              </TabsTrigger>
+              <TabsTrigger value="subscribers" className="flex items-center gap-2">
+                <Eye className="h-4 w-4" />
+                Subscribers ({usersByRole.subscribers.length})
+              </TabsTrigger>
+              <TabsTrigger value="inactive" className="flex items-center gap-2">
+                <UserMinus className="h-4 w-4" />
+                Inactive Users ({usersByRole.inactive.length})
+              </TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="all">
+              <UserTable users={sortUsersAlphabetically(users)} onToggleStatus={handleToggleUserStatus} getRoleBadgeVariant={getRoleBadgeVariant} />
+            </TabsContent>
+
+            <TabsContent value="admins">
+              {usersByRole.admins.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">No admins found</div>
+              ) : (
+                <UserTable users={usersByRole.admins} onToggleStatus={handleToggleUserStatus} getRoleBadgeVariant={getRoleBadgeVariant} />
+              )}
+            </TabsContent>
+
+            <TabsContent value="publishers">
+              {usersByRole.publishers.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">No publishers found</div>
+              ) : (
+                <UserTable users={usersByRole.publishers} onToggleStatus={handleToggleUserStatus} getRoleBadgeVariant={getRoleBadgeVariant} />
+              )}
+            </TabsContent>
+
+            <TabsContent value="subscribers">
+              {usersByRole.subscribers.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">No subscribers found</div>
+              ) : (
+                <UserTable users={usersByRole.subscribers} onToggleStatus={handleToggleUserStatus} getRoleBadgeVariant={getRoleBadgeVariant} />
+              )}
+            </TabsContent>
+
+            <TabsContent value="inactive">
+              {usersByRole.inactive.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  <UserCheck className="h-12 w-12 mx-auto mb-4 opacity-50 text-green-600" />
+                  <p>No inactive users - all users are active!</p>
+                </div>
+              ) : (
+                <UserTable users={usersByRole.inactive} onToggleStatus={handleToggleUserStatus} getRoleBadgeVariant={getRoleBadgeVariant} showInactiveHighlight={true} />
+              )}
+            </TabsContent>
+          </Tabs>
         </CardContent>
       </Card>
     </div>
   )
 }
+
+// Reusable User Table Component
+function UserTable({
+  users,
+  onToggleStatus,
+  getRoleBadgeVariant,
+  showInactiveHighlight = false,
+}: {
+  users: (UserProfile & { id: string })[]
+  onToggleStatus: (userId: string, currentStatus: boolean) => void
+  getRoleBadgeVariant: (role: UserRole) => any
+  showInactiveHighlight?: boolean
+}) {
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>Email</TableHead>
+          <TableHead>Display Name</TableHead>
+          <TableHead>Role</TableHead>
+          <TableHead>Status</TableHead>
+          <TableHead>Deactivated By</TableHead>
+          <TableHead>Created</TableHead>
+          <TableHead>Active</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {users.map((user) => (
+          <TableRow 
+            key={user.id}
+            className={showInactiveHighlight && !user.isActive ? "bg-red-50 dark:bg-red-950/20" : ""}
+          >
+            <TableCell className="font-medium">
+              <div className="flex items-center gap-2">
+                {user.email}
+                {(user as any).isPending && (
+                  <Badge variant="outline" className="text-xs bg-yellow-50 text-yellow-700 border-yellow-300">
+                    Pending First Login
+                  </Badge>
+                )}
+              </div>
+            </TableCell>
+            <TableCell>{user.displayName || "-"}</TableCell>
+            <TableCell>
+              <Badge variant={getRoleBadgeVariant(user.role)}>{user.role}</Badge>
+            </TableCell>
+            <TableCell>
+              <div className="flex items-center space-x-2">
+                {(user as any).isPending ? (
+                  <>
+                    <div className="h-4 w-4 rounded-full bg-yellow-400 animate-pulse" />
+                    <span className="text-yellow-600">Pending Login</span>
+                  </>
+                ) : user.isActive ? (
+                  <>
+                    <UserCheck className="h-4 w-4 text-green-600" />
+                    <span className="text-green-600">Active</span>
+                  </>
+                ) : (
+                  <>
+                    <UserX className="h-4 w-4 text-red-600" />
+                    <span className="text-red-600">Inactive</span>
+                  </>
+                )}
+              </div>
+            </TableCell>
+            <TableCell>
+              {!user.isActive && user.deactivatedBy ? (
+                <div className="flex flex-col">
+                  <span className="font-medium text-sm">{user.deactivatedBy}</span>
+                  {user.deactivatedAt && (() => {
+                    const date = convertTimestampToDate(user.deactivatedAt)
+                    if (!date) return null
+                    try {
+                      return (
+                        <span className="text-xs text-muted-foreground">
+                          {date.toLocaleDateString()} {date.toLocaleTimeString()}
+                        </span>
+                      )
+                    } catch (e) {
+                      return null
+                    }
+                  })()}
+                </div>
+              ) : (
+                <span className="text-muted-foreground text-sm">-</span>
+              )}
+            </TableCell>
+            <TableCell>
+              {(() => {
+                const date = convertTimestampToDate(user.createdAt)
+                if (!date) return "-"
+                try {
+                  return (
+                    <div className="flex flex-col">
+                      <span className="font-medium">{date.toLocaleDateString()}</span>
+                      <span className="text-xs text-muted-foreground">{date.toLocaleTimeString()}</span>
+                    </div>
+                  )
+                } catch (e) {
+                  return "-"
+                }
+              })()}
+            </TableCell>
+            <TableCell>
+              {(user as any).isPending ? (
+                <span className="text-xs text-muted-foreground">
+                  Waiting for first login
+                </span>
+              ) : (
+                <Switch
+                  checked={user.isActive}
+                  onCheckedChange={() => onToggleStatus(user.id, user.isActive)}
+                />
+              )}
+            </TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  )
+}
+

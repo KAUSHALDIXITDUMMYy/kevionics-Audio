@@ -28,6 +28,7 @@ export function LoginForm() {
     if (signInError) {
       setError(signInError)
     } else if (user) {
+      // Successfully logged in
       router.push("/dashboard")
     }
 
@@ -38,7 +39,7 @@ export function LoginForm() {
     <Card className="w-full max-w-md mx-auto">
       <CardHeader>
         <CardTitle>Sign In</CardTitle>
-        <CardDescription>Enter your credentials to access Kevonics Audio</CardDescription>
+        <CardDescription>Enter your credentials to access Kevonics Screen Share</CardDescription>
       </CardHeader>
       <CardContent>
         <form onSubmit={handleSubmit} className="space-y-4">

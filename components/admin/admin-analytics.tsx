@@ -1,365 +1,702 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Alert, AlertDescription } from "@/components/ui/alert"
-import { 
-  getAdminAnalytics, 
-  getAllActiveViewers, 
-  subscribeToAllActiveViewers,
-  type AdminAnalytics,
-  type ViewerSession 
-} from "@/lib/analytics"
-import { getActiveStreams } from "@/lib/streaming"
-import type { StreamSession } from "@/lib/streaming"
+import { Button } from "@/components/ui/button"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { ScrollArea } from "@/components/ui/scroll-area"
 import { 
   Users, 
-  Activity, 
-  TrendingUp, 
   Eye, 
+  Play, 
   Clock, 
-  BarChart3,
+  TrendingUp, 
+  Activity,
   RefreshCw,
+  BarChart3,
+  UserCheck,
   Monitor,
-  User
+  Wifi,
+  Radio
 } from "lucide-react"
+import { type StreamAnalytics, type StreamViewer, type AnalyticsSummary, cleanupStaleViewers } from "@/lib/analytics"
+import { db } from "@/lib/firebase"
+import { collection, query, where, orderBy, limit, onSnapshot } from "firebase/firestore"
 
 export function AdminAnalytics() {
-  const [analytics, setAnalytics] = useState<AdminAnalytics | null>(null)
-  const [activeViewers, setActiveViewers] = useState<ViewerSession[]>([])
-  const [activeStreams, setActiveStreams] = useState<StreamSession[]>([])
+  const [analytics, setAnalytics] = useState<StreamAnalytics[]>([])
+  const [activeViewers, setActiveViewers] = useState<StreamViewer[]>([])
+  const [activeStreams, setActiveStreams] = useState<any[]>([])
+  const [summary, setSummary] = useState<AnalyticsSummary | null>(null)
   const [loading, setLoading] = useState(true)
-  const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState("")
+  const [lastUpdated, setLastUpdated] = useState<Date>(new Date())
+  const [isLive, setIsLive] = useState(false)
+  const [cleanupCount, setCleanupCount] = useState(0)
 
   useEffect(() => {
-    loadAnalytics()
+    setLoading(true)
+    setError("")
     
-    // Set up real-time subscription to active viewers
-    const unsubscribe = subscribeToAllActiveViewers((viewers) => {
-      setActiveViewers(viewers)
-    })
-
+    // Real-time listener for active viewers
+    const activeViewersRef = collection(db, "activeViewers")
+    const activeViewersQuery = query(activeViewersRef, where("isActive", "==", true))
+    
+    const unsubViewers = onSnapshot(
+      activeViewersQuery,
+      (snapshot) => {
+        const viewers = snapshot.docs.map(doc => {
+          const data = doc.data()
+          return {
+            id: doc.id,
+            streamSessionId: data.streamSessionId,
+            subscriberId: data.subscriberId,
+            subscriberName: data.subscriberName,
+            publisherId: data.publisherId,
+            publisherName: data.publisherName,
+            joinedAt: data.joinedAt?.toDate?.() || new Date(data.joinedAt),
+            lastSeen: data.lastSeen?.toDate?.() || new Date(data.lastSeen),
+            isActive: data.isActive
+          }
+        }) as StreamViewer[]
+        
+        setActiveViewers(viewers)
+        setLastUpdated(new Date())
+        setIsLive(true)
+      },
+      (err) => {
+        setError(err.message || "Failed to subscribe to active viewers")
+        setIsLive(false)
+      }
+    )
+    
+    // Real-time listener for active streams
+    const streamsRef = collection(db, "streamSessions")
+    const activeStreamsQuery = query(streamsRef, where("isActive", "==", true))
+    
+    const unsubStreams = onSnapshot(
+      activeStreamsQuery,
+      (snapshot) => {
+        const streams = snapshot.docs.map(doc => {
+          const data = doc.data()
+          return {
+            id: doc.id,
+            ...data,
+            createdAt: data.createdAt?.toDate?.() || new Date(data.createdAt)
+          }
+        })
+        
+        setActiveStreams(streams)
+        setLastUpdated(new Date())
+      },
+      (err) => {
+        console.error("Error subscribing to streams:", err)
+      }
+    )
+    
+    // Real-time listener for recent analytics
+    const analyticsRef = collection(db, "streamAnalytics")
+    const analyticsQuery = query(analyticsRef, orderBy("timestamp", "desc"), limit(100))
+    
+    const unsubAnalytics = onSnapshot(
+      analyticsQuery,
+      (snapshot) => {
+        const analyticsData = snapshot.docs.map(doc => {
+          const data = doc.data()
+          return {
+            id: doc.id,
+            streamSessionId: data.streamSessionId,
+            subscriberId: data.subscriberId,
+            subscriberName: data.subscriberName,
+            publisherId: data.publisherId,
+            publisherName: data.publisherName,
+            action: data.action,
+            timestamp: data.timestamp?.toDate?.() || new Date(data.timestamp),
+            duration: data.duration
+          }
+        }) as StreamAnalytics[]
+        
+        setAnalytics(analyticsData)
+        
+        // Calculate summary statistics
+        const uniqueViewers = new Set(analyticsData.map(a => a.subscriberId)).size
+        const leaveEvents = analyticsData.filter(a => a.action === 'leave')
+        const averageViewDuration = leaveEvents.length > 0 
+          ? leaveEvents.reduce((sum, event) => sum + (event.duration || 0), 0) / leaveEvents.length
+          : 0
+        
+        setSummary({
+          totalAnalytics: analyticsData.length,
+          activeViewersCount: activeViewers.length,
+          activeStreamsCount: activeStreams.length,
+          uniqueViewers,
+          averageViewDuration: Math.round(averageViewDuration)
+        })
+        
+        setLastUpdated(new Date())
+        setLoading(false)
+      },
+      (err) => {
+        setError(err.message || "Failed to subscribe to analytics")
+        setLoading(false)
+      }
+    )
+    
     return () => {
-      unsubscribe()
+      unsubViewers()
+      unsubStreams()
+      unsubAnalytics()
     }
   }, [])
-
-  const loadAnalytics = async () => {
-    try {
-      setRefreshing(true)
-      const [analyticsData, streamsData] = await Promise.all([
-        getAdminAnalytics(),
-        getActiveStreams()
-      ])
-      
-      setAnalytics(analyticsData)
-      setActiveStreams(streamsData)
-      setError("")
-    } catch (err: any) {
-      console.error("Error loading analytics:", err)
-      setError("Failed to load analytics data")
-    } finally {
-      setLoading(false)
-      setRefreshing(false)
+  
+  // Periodic cleanup of stale viewers (every 2 minutes)
+  useEffect(() => {
+    const cleanupStale = async () => {
+      const result = await cleanupStaleViewers()
+      if (result.success && result.cleanedUp && result.cleanedUp > 0) {
+        setCleanupCount(prev => prev + result.cleanedUp!)
+        console.log(`Cleaned up ${result.cleanedUp} stale viewers`)
+      }
     }
-  }
-
-  const formatDuration = (seconds: number): string => {
-    const hours = Math.floor(seconds / 3600)
-    const minutes = Math.floor((seconds % 3600) / 60)
-    const secs = seconds % 60
     
-    if (hours > 0) {
-      return `${hours}h ${minutes}m ${secs}s`
-    } else if (minutes > 0) {
-      return `${minutes}m ${secs}s`
-    } else {
-      return `${secs}s`
+    // Run immediately
+    cleanupStale()
+    
+    // Then run every 2 minutes
+    const interval = setInterval(cleanupStale, 2 * 60 * 1000)
+    
+    return () => clearInterval(interval)
+  }, [])
+  
+  // Filter viewers to only show those watching actually active streams AND have recent activity
+  const validActiveViewers = useMemo(() => {
+    const activeStreamIds = new Set(activeStreams.map(s => s.id))
+    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000)
+    
+    return activeViewers.filter(viewer => {
+      // Must be watching an active stream
+      if (!activeStreamIds.has(viewer.streamSessionId)) return false
+      
+      // Must have been seen in the last 5 minutes
+      const lastSeen = new Date(viewer.lastSeen)
+      if (lastSeen < fiveMinutesAgo) return false
+      
+      return true
+    })
+  }, [activeViewers, activeStreams])
+  
+  // Update summary when activeViewers or activeStreams change
+  useEffect(() => {
+    if (analytics.length > 0 || validActiveViewers.length > 0 || activeStreams.length > 0) {
+      const uniqueViewers = new Set(analytics.map(a => a.subscriberId)).size
+      const leaveEvents = analytics.filter(a => a.action === 'leave')
+      const averageViewDuration = leaveEvents.length > 0 
+        ? leaveEvents.reduce((sum, event) => sum + (event.duration || 0), 0) / leaveEvents.length
+        : 0
+      
+      setSummary({
+        totalAnalytics: analytics.length,
+        activeViewersCount: validActiveViewers.length,
+        activeStreamsCount: activeStreams.length,
+        uniqueViewers,
+        averageViewDuration: Math.round(averageViewDuration)
+      })
+    }
+  }, [validActiveViewers, activeStreams, analytics])
+
+  const getActionBadgeVariant = (action: string) => {
+    switch (action) {
+      case 'join':
+        return "default"
+      case 'leave':
+        return "secondary"
+      case 'viewing':
+        return "outline"
+      default:
+        return "outline"
     }
   }
 
-  const getStreamViewerCount = (streamId: string): number => {
-    return activeViewers.filter(viewer => viewer.streamId === streamId).length
+  const formatDuration = (seconds: number) => {
+    if (seconds < 60) return `${seconds}s`
+    const minutes = Math.floor(seconds / 60)
+    const remainingSeconds = seconds % 60
+    return `${minutes}m ${remainingSeconds}s`
   }
 
-  const getStreamViewers = (streamId: string): ViewerSession[] => {
-    return activeViewers.filter(viewer => viewer.streamId === streamId)
+  const getRecentActivity = () => {
+    return analytics.slice(0, 10)
   }
 
-  if (loading) {
+  const getTopStreams = () => {
+    const streamStats = new Map()
+    
+    analytics.forEach(activity => {
+      const key = activity.streamSessionId
+      if (!streamStats.has(key)) {
+        streamStats.set(key, {
+          streamSessionId: key,
+          publisherName: activity.publisherName,
+          title: `Stream by ${activity.publisherName}`,
+          viewCount: 0,
+          uniqueViewers: new Set()
+        })
+      }
+      
+      const stats = streamStats.get(key)
+      if (activity.action === 'join') {
+        stats.viewCount++
+        stats.uniqueViewers.add(activity.subscriberId)
+      }
+    })
+
+    return Array.from(streamStats.values())
+      .map(stats => ({
+        ...stats,
+        uniqueViewers: stats.uniqueViewers.size
+      }))
+      .sort((a, b) => b.viewCount - a.viewCount)
+      .slice(0, 5)
+  }
+
+  if (loading && analytics.length === 0) {
     return (
-      <Card>
-        <CardContent className="flex items-center justify-center p-8">
-          <div className="text-center">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
-            <p className="text-muted-foreground">Loading analytics...</p>
-          </div>
-        </CardContent>
-      </Card>
-    )
-  }
-
-  if (!analytics) {
-    return (
-      <Alert variant="destructive">
-        <AlertDescription>Failed to load analytics data</AlertDescription>
-      </Alert>
+      <div className="flex items-center justify-center p-8">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+      </div>
     )
   }
 
   return (
     <div className="space-y-6">
       {/* Header */}
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-2">
-              <BarChart3 className="h-5 w-5 text-blue-500" />
-              <CardTitle>Live Analytics Dashboard</CardTitle>
-              <Badge variant="outline" className="animate-pulse">
-                Real-time
-              </Badge>
+      <div className="flex items-center justify-between">
+        <div>
+          <div className="flex items-center gap-3">
+            <h2 className="text-2xl font-bold">Analytics Dashboard</h2>
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-gradient-to-r from-green-50 to-emerald-50 dark:from-green-950/30 dark:to-emerald-950/30 border border-green-200 dark:border-green-800">
+              <Radio className={`h-3.5 w-3.5 text-green-600 dark:text-green-400 ${isLive ? 'animate-pulse' : ''}`} />
+              <span className="text-xs font-semibold text-green-700 dark:text-green-300">
+                {isLive ? "LIVE" : "CONNECTING..."}
+              </span>
             </div>
-            <button
-              onClick={loadAnalytics}
-              disabled={refreshing}
-              className="p-2 hover:bg-muted rounded-md transition-colors"
-            >
-              <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
-            </button>
           </div>
-          <CardDescription>
-            Real-time monitoring of subscribers, streams, and viewer activity
-          </CardDescription>
-        </CardHeader>
-      </Card>
+          <p className="text-muted-foreground mt-1">
+            Real-time insights • Auto-cleanup active • Data always accurate
+          </p>
+        </div>
+        <div className="flex items-center space-x-3">
+          <div className="text-right">
+            <p className="text-xs text-muted-foreground">Last update</p>
+            <p className="text-sm font-medium">{lastUpdated.toLocaleTimeString()}</p>
+            {cleanupCount > 0 && (
+              <p className="text-xs text-muted-foreground">Cleaned: {cleanupCount} stale</p>
+            )}
+          </div>
+          <div className="h-8 w-px bg-border" />
+          <div className="flex flex-col items-center">
+            <Wifi className="h-5 w-5 text-green-600 dark:text-green-400 animate-pulse" />
+            <p className="text-[10px] text-green-600 dark:text-green-400 font-medium">SYNC</p>
+          </div>
+        </div>
+      </div>
 
-      {/* Error Alert */}
       {error && (
         <Alert variant="destructive">
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}
+      
+      {/* Data Quality Info */}
+      {validActiveViewers.length !== activeViewers.length && (
+        <Alert className="border-blue-200 bg-blue-50 dark:bg-blue-950/30">
+          <Activity className="h-4 w-4 text-blue-600" />
+          <AlertDescription className="text-blue-800 dark:text-blue-200">
+            <strong>Data Quality:</strong> Showing {validActiveViewers.length} active viewers (filtered from {activeViewers.length} total). 
+            Stale connections are automatically removed to ensure accuracy.
+          </AlertDescription>
+        </Alert>
+      )}
 
-      {/* Overview Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center space-x-2">
-              <Users className="h-4 w-4 text-blue-600" />
-              <div>
-                <p className="text-sm font-medium">Total Subscribers</p>
-                <p className="text-2xl font-bold">{analytics.totalSubscribers}</p>
+      {/* Summary Cards */}
+      {summary && (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <Card className="border-blue-200 dark:border-blue-800 bg-gradient-to-br from-blue-50 to-blue-100/50 dark:from-blue-950/30 dark:to-blue-900/20">
+            <CardContent className="p-6">
+              <div className="flex items-start justify-between">
+                <div className="space-y-2">
+                  <p className="text-sm font-medium text-blue-700 dark:text-blue-300">Total Subscribers</p>
+                  <p className="text-3xl font-bold text-blue-900 dark:text-blue-100">{summary.uniqueViewers}</p>
+                  <p className="text-xs text-blue-600 dark:text-blue-400">who have viewed streams</p>
+                </div>
+                <div className="p-3 rounded-full bg-blue-600 dark:bg-blue-500">
+                  <Users className="h-5 w-5 text-white" />
+                </div>
               </div>
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
 
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center space-x-2">
-              <Monitor className="h-4 w-4 text-green-600" />
-              <div>
-                <p className="text-sm font-medium">Active Streams</p>
-                <p className="text-2xl font-bold">{analytics.activeStreams}</p>
+          <Card className="border-green-200 dark:border-green-800 bg-gradient-to-br from-green-50 to-green-100/50 dark:from-green-950/30 dark:to-green-900/20">
+            <CardContent className="p-6">
+              <div className="flex items-start justify-between">
+                <div className="space-y-2">
+                  <p className="text-sm font-medium text-green-700 dark:text-green-300">Watching Now</p>
+                  <div className="flex items-baseline gap-2">
+                    <p className="text-3xl font-bold text-green-900 dark:text-green-100">{validActiveViewers.length}</p>
+                    <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+                  </div>
+                  <p className="text-xs text-green-600 dark:text-green-400">live viewers right now</p>
+                </div>
+                <div className="p-3 rounded-full bg-green-600 dark:bg-green-500 animate-pulse">
+                  <Eye className="h-5 w-5 text-white" />
+                </div>
               </div>
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
 
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center space-x-2">
-              <Eye className="h-4 w-4 text-purple-600" />
-              <div>
-                <p className="text-sm font-medium">Active Viewers</p>
-                <p className="text-2xl font-bold">{analytics.totalActiveViewers}</p>
+          <Card className="border-purple-200 dark:border-purple-800 bg-gradient-to-br from-purple-50 to-purple-100/50 dark:from-purple-950/30 dark:to-purple-900/20">
+            <CardContent className="p-6">
+              <div className="flex items-start justify-between">
+                <div className="space-y-2">
+                  <p className="text-sm font-medium text-purple-700 dark:text-purple-300">Live Streams</p>
+                  <div className="flex items-baseline gap-2">
+                    <p className="text-3xl font-bold text-purple-900 dark:text-purple-100">{activeStreams.length}</p>
+                    {activeStreams.length > 0 && <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />}
+                  </div>
+                  <p className="text-xs text-purple-600 dark:text-purple-400">broadcasting now</p>
+                </div>
+                <div className={`p-3 rounded-full bg-purple-600 dark:bg-purple-500 ${activeStreams.length > 0 ? 'animate-pulse' : ''}`}>
+                  <Play className="h-5 w-5 text-white" />
+                </div>
               </div>
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
 
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center space-x-2">
-              <TrendingUp className="h-4 w-4 text-orange-600" />
-              <div>
-                <p className="text-sm font-medium">Avg Viewers/Stream</p>
-                <p className="text-2xl font-bold">{analytics.averageViewersPerStream.toFixed(1)}</p>
+          <Card className="border-orange-200 dark:border-orange-800 bg-gradient-to-br from-orange-50 to-orange-100/50 dark:from-orange-950/30 dark:to-orange-900/20">
+            <CardContent className="p-6">
+              <div className="flex items-start justify-between">
+                <div className="space-y-2">
+                  <p className="text-sm font-medium text-orange-700 dark:text-orange-300">Avg. Watch Time</p>
+                  <p className="text-3xl font-bold text-orange-900 dark:text-orange-100">{formatDuration(summary.averageViewDuration)}</p>
+                  <p className="text-xs text-orange-600 dark:text-orange-400">per viewing session</p>
+                </div>
+                <div className="p-3 rounded-full bg-orange-600 dark:bg-orange-500">
+                  <Clock className="h-5 w-5 text-white" />
+                </div>
               </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
-      {/* Additional Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center space-x-2">
-              <Activity className="h-4 w-4 text-red-600" />
-              <div>
-                <p className="text-sm font-medium">Streams Today</p>
-                <p className="text-2xl font-bold">{analytics.totalStreamsToday}</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+      {/* Analytics Tabs */}
+      <Tabs defaultValue="overview" className="space-y-4">
+        <TabsList>
+          <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="viewers">Active Viewers</TabsTrigger>
+          <TabsTrigger value="streams">Stream Performance</TabsTrigger>
+          <TabsTrigger value="activity">Recent Activity</TabsTrigger>
+        </TabsList>
 
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center space-x-2">
-              <User className="h-4 w-4 text-indigo-600" />
-              <div>
-                <p className="text-sm font-medium">Total Publishers</p>
-                <p className="text-2xl font-bold">{analytics.totalPublishers}</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+        <TabsContent value="overview" className="space-y-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Current Active Viewers - Who is watching What */}
+            <Card className="border-2">
+              <CardHeader className="bg-gradient-to-r from-green-50 to-emerald-50 dark:from-green-950/30 dark:to-emerald-950/30">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="flex items-center space-x-2">
+                      <UserCheck className="h-5 w-5 text-green-600" />
+                      <span>Who is Watching What</span>
+                    </CardTitle>
+                    <CardDescription className="mt-1">
+                      Real-time viewer activity • Updates live
+                    </CardDescription>
+                  </div>
+                  <Badge variant="outline" className="bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300 border-green-300 dark:border-green-700">
+                    {validActiveViewers.length} watching now
+                  </Badge>
+                </div>
+              </CardHeader>
+              <CardContent className="pt-6">
+                {validActiveViewers.length > 0 ? (
+                  <ScrollArea className="h-[400px] pr-4">
+                    <div className="space-y-3">
+                      {validActiveViewers.map((viewer) => {
+                        const watchTime = Math.floor((new Date().getTime() - new Date(viewer.joinedAt).getTime()) / 1000)
+                        const lastSeenMs = new Date().getTime() - new Date(viewer.lastSeen).getTime()
+                        const lastSeenMinutes = Math.floor(lastSeenMs / 1000 / 60)
+                        const isRecent = lastSeenMs < 60000 // Less than 1 minute ago
+                        
+                        return (
+                          <div 
+                            key={viewer.id} 
+                            className="group relative p-4 bg-gradient-to-r from-white to-green-50/30 dark:from-slate-900 dark:to-green-950/20 rounded-lg border border-green-200 dark:border-green-900 hover:shadow-md transition-all duration-200"
+                          >
+                            <div className="absolute top-2 right-2 flex items-center gap-2">
+                              <div className={`w-2.5 h-2.5 rounded-full ${isRecent ? 'bg-green-500 animate-pulse' : 'bg-yellow-500'} shadow-lg ${isRecent ? 'shadow-green-500/50' : 'shadow-yellow-500/50'}`} />
+                              {!isRecent && lastSeenMinutes > 0 && (
+                                <span className="text-[10px] text-yellow-600 dark:text-yellow-400">
+                                  {lastSeenMinutes}m ago
+                                </span>
+                              )}
+                            </div>
+                            <div className="space-y-2">
+                              <div className="flex items-start justify-between pr-6">
+                                <div className="space-y-1">
+                                  <div className="flex items-center gap-2">
+                                    <Users className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+                                    <p className="font-semibold text-base">{viewer.subscriberName}</p>
+                                  </div>
+                                  <div className="flex items-center gap-2 ml-6">
+                                    <Eye className="h-3.5 w-3.5 text-muted-foreground" />
+                                    <p className="text-sm text-muted-foreground">watching</p>
+                                  </div>
+                                  <div className="flex items-center gap-2 ml-6">
+                                    <Monitor className="h-4 w-4 text-purple-600 dark:text-purple-400" />
+                                    <p className="font-medium text-purple-700 dark:text-purple-300">
+                                      {viewer.publisherName}
+                                    </p>
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-3 text-xs text-muted-foreground ml-6 pt-1 border-t border-green-100 dark:border-green-900">
+                                <div className="flex items-center gap-1">
+                                  <Clock className="h-3 w-3" />
+                                  <span>Started {new Date(viewer.joinedAt).toLocaleTimeString()}</span>
+                                </div>
+                                <div className="w-1 h-1 rounded-full bg-muted-foreground/50" />
+                                <div className="flex items-center gap-1">
+                                  <TrendingUp className="h-3 w-3" />
+                                  <span>{formatDuration(watchTime)} elapsed</span>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </ScrollArea>
+                ) : (
+                  <div className="text-center text-muted-foreground py-16">
+                    <div className="relative inline-block">
+                      <Eye className="h-16 w-16 mx-auto mb-4 opacity-20" />
+                      <div className="absolute inset-0 bg-gradient-to-t from-background to-transparent" />
+                    </div>
+                    <p className="font-medium">No Active Viewers</p>
+                    <p className="text-sm mt-1">Viewers will appear here when they join streams</p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
 
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center space-x-2">
-              <TrendingUp className="h-4 w-4 text-pink-600" />
-              <div>
-                <p className="text-sm font-medium">Peak Viewers Today</p>
-                <p className="text-2xl font-bold">{analytics.peakViewersToday}</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+            {/* Active Streams */}
+            <Card className="border-2">
+              <CardHeader className="bg-gradient-to-r from-purple-50 to-pink-50 dark:from-purple-950/30 dark:to-pink-950/30">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="flex items-center space-x-2">
+                      <Monitor className="h-5 w-5 text-purple-600" />
+                      <span>Live Streams</span>
+                    </CardTitle>
+                    <CardDescription className="mt-1">
+                      Active broadcasts right now
+                    </CardDescription>
+                  </div>
+                  <Badge variant="outline" className="bg-purple-100 dark:bg-purple-900 text-purple-700 dark:text-purple-300 border-purple-300 dark:border-purple-700">
+                    {activeStreams.length} live
+                  </Badge>
+                </div>
+              </CardHeader>
+              <CardContent className="pt-6">
+                {activeStreams.length > 0 ? (
+                  <ScrollArea className="h-[400px] pr-4">
+                    <div className="space-y-3">
+                      {activeStreams.map((stream) => {
+                        const viewersCount = validActiveViewers.filter(v => v.streamSessionId === stream.id).length
+                        const streamDuration = Math.floor((new Date().getTime() - new Date(stream.createdAt).getTime()) / 1000)
+                        return (
+                          <div 
+                            key={stream.id} 
+                            className="group p-4 bg-gradient-to-r from-white to-purple-50/30 dark:from-slate-900 dark:to-purple-950/20 rounded-lg border border-purple-200 dark:border-purple-900 hover:shadow-md transition-all duration-200"
+                          >
+                            <div className="space-y-3">
+                              <div className="flex items-start justify-between">
+                                <div className="space-y-1 flex-1">
+                                  <div className="flex items-center gap-2">
+                                    <Badge variant="destructive" className="animate-pulse">
+                                      <Radio className="h-3 w-3 mr-1" />
+                                      LIVE
+                                    </Badge>
+                                  </div>
+                                  <p className="font-semibold text-base mt-2">
+                                    {stream.title || "Untitled Stream"}
+                                  </p>
+                                  <div className="flex items-center gap-2">
+                                    <Monitor className="h-3.5 w-3.5 text-muted-foreground" />
+                                    <p className="text-sm text-muted-foreground">
+                                      by {stream.publisherName}
+                                    </p>
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="flex items-center justify-between pt-2 border-t border-purple-100 dark:border-purple-900">
+                                <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                                  <div className="flex items-center gap-1">
+                                    <Eye className="h-3 w-3" />
+                                    <span className="font-medium">{viewersCount} watching</span>
+                                  </div>
+                                  <div className="w-1 h-1 rounded-full bg-muted-foreground/50" />
+                                  <div className="flex items-center gap-1">
+                                    <Clock className="h-3 w-3" />
+                                    <span>{formatDuration(streamDuration)}</span>
+                                  </div>
+                                </div>
+                                <p className="text-xs text-muted-foreground">
+                                  {new Date(stream.createdAt).toLocaleTimeString()}
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </ScrollArea>
+                ) : (
+                  <div className="text-center text-muted-foreground py-16">
+                    <div className="relative inline-block">
+                      <Play className="h-16 w-16 mx-auto mb-4 opacity-20" />
+                      <div className="absolute inset-0 bg-gradient-to-t from-background to-transparent" />
+                    </div>
+                    <p className="font-medium">No Live Streams</p>
+                    <p className="text-sm mt-1">Streams will appear here when publishers go live</p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
 
-      {/* Active Streams with Viewer Counts */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Live Streams & Viewers</CardTitle>
-          <CardDescription>Real-time viewer counts for each active stream</CardDescription>
-        </CardHeader>
-        <CardContent>
-          {activeStreams.length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground">
-              <Monitor className="h-12 w-12 mx-auto mb-4 opacity-50" />
-              <p>No active streams</p>
-              <p className="text-sm">Streams will appear here when publishers go live</p>
-            </div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Stream Title</TableHead>
-                  <TableHead>Publisher</TableHead>
-                  <TableHead>Room ID</TableHead>
-                  <TableHead>Viewers</TableHead>
-                  <TableHead>Duration</TableHead>
-                  <TableHead>Status</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {activeStreams.map((stream) => {
-                  const viewerCount = getStreamViewerCount(stream.id!)
-                  const duration = Math.floor((new Date().getTime() - new Date(stream.createdAt).getTime()) / 1000)
-                  
-                  return (
-                    <TableRow key={stream.id}>
-                      <TableCell className="font-medium">
-                        {stream.title || "Untitled Stream"}
-                      </TableCell>
-                      <TableCell>{stream.publisherName}</TableCell>
+        <TabsContent value="viewers" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>All Active Viewers</CardTitle>
+              <CardDescription>
+                Complete list of subscribers currently watching streams
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Subscriber</TableHead>
+                    <TableHead>Watching</TableHead>
+                    <TableHead>Joined At</TableHead>
+                    <TableHead>Last Seen</TableHead>
+                    <TableHead>Status</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {validActiveViewers.map((viewer) => (
+                    <TableRow key={viewer.id}>
+                      <TableCell className="font-medium">{viewer.subscriberName}</TableCell>
+                      <TableCell>{viewer.publisherName}</TableCell>
+                      <TableCell>{new Date(viewer.joinedAt).toLocaleString()}</TableCell>
+                      <TableCell>{new Date(viewer.lastSeen).toLocaleString()}</TableCell>
                       <TableCell>
-                        <code className="text-xs bg-muted px-2 py-1 rounded">
-                          {stream.roomId}
-                        </code>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center space-x-2">
-                          <Eye className="h-4 w-4 text-muted-foreground" />
-                          <span className="font-medium">{viewerCount}</span>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center space-x-2">
-                          <Clock className="h-4 w-4 text-muted-foreground" />
-                          <span>{formatDuration(duration)}</span>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="destructive" className="animate-pulse">
-                          LIVE
+                        <Badge variant={viewer.isActive ? "default" : "secondary"}>
+                          {viewer.isActive ? "Active" : "Inactive"}
                         </Badge>
                       </TableCell>
                     </TableRow>
-                  )
-                })}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
+                  ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </TabsContent>
 
-      {/* Active Viewers Details */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Active Viewers</CardTitle>
-          <CardDescription>Currently watching streams across all publishers</CardDescription>
-        </CardHeader>
-        <CardContent>
-          {activeViewers.length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground">
-              <Users className="h-12 w-12 mx-auto mb-4 opacity-50" />
-              <p>No active viewers</p>
-              <p className="text-sm">Viewers will appear here when they join streams</p>
-            </div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Subscriber</TableHead>
-                  <TableHead>Email</TableHead>
-                  <TableHead>Watching</TableHead>
-                  <TableHead>Publisher</TableHead>
-                  <TableHead>Joined</TableHead>
-                  <TableHead>Duration</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {activeViewers.map((viewer) => {
-                  const duration = Math.floor((new Date().getTime() - new Date(viewer.joinedAt).getTime()) / 1000)
-                  
-                  return (
-                    <TableRow key={viewer.id}>
+        <TabsContent value="streams" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Stream Performance</CardTitle>
+              <CardDescription>
+                Top performing streams by view count
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Stream</TableHead>
+                    <TableHead>Publisher</TableHead>
+                    <TableHead>Total Views</TableHead>
+                    <TableHead>Unique Viewers</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {getTopStreams().map((stream, index) => (
+                    <TableRow key={stream.streamSessionId}>
                       <TableCell className="font-medium">
-                        {viewer.subscriberName}
+                        #{index + 1} {stream.title}
                       </TableCell>
-                      <TableCell>{viewer.subscriberEmail}</TableCell>
-                      <TableCell>
-                        <div className="flex items-center space-x-2">
-                          <Monitor className="h-4 w-4 text-muted-foreground" />
-                          <span>{viewer.streamTitle || "Untitled Stream"}</span>
-                        </div>
-                      </TableCell>
-                      <TableCell>{viewer.publisherName}</TableCell>
-                      <TableCell>
-                        {new Date(viewer.joinedAt).toLocaleTimeString()}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center space-x-2">
-                          <Clock className="h-4 w-4 text-muted-foreground" />
-                          <span>{formatDuration(duration)}</span>
-                        </div>
-                      </TableCell>
+                      <TableCell>{stream.publisherName}</TableCell>
+                      <TableCell>{stream.viewCount}</TableCell>
+                      <TableCell>{stream.uniqueViewers}</TableCell>
                     </TableRow>
-                  )
-                })}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
+                  ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="activity" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Recent Activity</CardTitle>
+              <CardDescription>
+                Latest subscriber actions across all streams
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Subscriber</TableHead>
+                    <TableHead>Action</TableHead>
+                    <TableHead>Stream</TableHead>
+                    <TableHead>Publisher</TableHead>
+                    <TableHead>Duration</TableHead>
+                    <TableHead>Time</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {getRecentActivity().map((activity) => (
+                    <TableRow key={activity.id}>
+                      <TableCell className="font-medium">{activity.subscriberName}</TableCell>
+                      <TableCell>
+                        <Badge variant={getActionBadgeVariant(activity.action)}>
+                          {activity.action}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>Stream Session</TableCell>
+                      <TableCell>{activity.publisherName}</TableCell>
+                      <TableCell>
+                        {activity.duration ? formatDuration(activity.duration) : "-"}
+                      </TableCell>
+                      <TableCell>{new Date(activity.timestamp).toLocaleString()}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
     </div>
   )
 }

@@ -33,19 +33,35 @@ export interface ViewerSession {
 }
 
 export interface StreamAnalytics {
-  streamId: string
+  id?: string
+  streamSessionId: string
+  subscriberId: string
+  subscriberName: string
   publisherId: string
   publisherName: string
-  streamTitle?: string
-  roomId: string
-  totalViewers: number
-  currentViewers: number
-  totalDuration: number // in seconds
-  peakViewers: number
-  averageViewers: number
-  createdAt: Date
-  endedAt?: Date
+  action: 'join' | 'leave' | 'viewing'
+  timestamp: Date
+  duration?: number // in seconds
+}
+
+export interface StreamViewer {
+  id?: string
+  streamSessionId: string
+  subscriberId: string
+  subscriberName: string
+  publisherId: string
+  publisherName: string
+  joinedAt: Date
+  lastSeen: Date
   isActive: boolean
+}
+
+export interface AnalyticsSummary {
+  totalAnalytics: number
+  activeViewersCount: number
+  activeStreamsCount: number
+  uniqueViewers: number
+  averageViewDuration: number
 }
 
 export interface PublisherAnalytics {
@@ -333,5 +349,95 @@ export const getStreamViewerHistory = async (streamId: string): Promise<ViewerSe
   } catch (error) {
     console.error("Error fetching stream viewer history:", error)
     return []
+  }
+}
+
+// Track analytics event (join, leave, etc.)
+export const trackAnalyticsEvent = async (event: Omit<StreamAnalytics, "id" | "timestamp">) => {
+  try {
+    const analyticsData = {
+      ...event,
+      timestamp: new Date(),
+    }
+    
+    const docRef = await addDoc(collection(db, "streamAnalytics"), analyticsData)
+    return { success: true, id: docRef.id }
+  } catch (error: any) {
+    console.error("Error tracking analytics event:", error)
+    return { success: false, error: error.message }
+  }
+}
+
+// Create or update active viewer entry
+export const updateActiveViewer = async (viewer: Omit<StreamViewer, "id">) => {
+  try {
+    // Check if viewer already exists for this stream
+    const viewersRef = collection(db, "activeViewers")
+    const q = query(
+      viewersRef,
+      where("subscriberId", "==", viewer.subscriberId),
+      where("streamSessionId", "==", viewer.streamSessionId)
+    )
+    
+    const existing = await getDocs(q)
+    
+    if (!existing.empty) {
+      // Update existing
+      const docRef = doc(db, "activeViewers", existing.docs[0].id)
+      await updateDoc(docRef, {
+        lastSeen: new Date(),
+        isActive: viewer.isActive
+      })
+      return { success: true, id: existing.docs[0].id }
+    } else {
+      // Create new
+      const docRef = await addDoc(collection(db, "activeViewers"), viewer)
+      return { success: true, id: docRef.id }
+    }
+  } catch (error: any) {
+    console.error("Error updating active viewer:", error)
+    return { success: false, error: error.message }
+  }
+}
+
+// Remove active viewer
+export const removeActiveViewer = async (subscriberId: string, streamSessionId: string) => {
+  try {
+    const viewersRef = collection(db, "activeViewers")
+    const q = query(
+      viewersRef,
+      where("subscriberId", "==", subscriberId),
+      where("streamSessionId", "==", streamSessionId)
+    )
+    
+    const querySnapshot = await getDocs(q)
+    await Promise.all(querySnapshot.docs.map(doc => deleteDoc(doc.ref)))
+    
+    return { success: true }
+  } catch (error: any) {
+    console.error("Error removing active viewer:", error)
+    return { success: false, error: error.message }
+  }
+}
+
+// Cleanup stale active viewers (viewers who haven't been seen in 5+ minutes)
+export const cleanupStaleViewers = async () => {
+  try {
+    const viewersRef = collection(db, "activeViewers")
+    const q = query(viewersRef, where("isActive", "==", true))
+    const querySnapshot = await getDocs(q)
+    
+    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000)
+    const staleViewers = querySnapshot.docs.filter(doc => {
+      const lastSeen = doc.data().lastSeen?.toDate?.() || new Date(doc.data().lastSeen)
+      return lastSeen < fiveMinutesAgo
+    })
+    
+    await Promise.all(staleViewers.map(doc => deleteDoc(doc.ref)))
+    
+    return { success: true, cleanedUp: staleViewers.length }
+  } catch (error: any) {
+    console.error("Error cleaning up stale viewers:", error)
+    return { success: false, error: error.message }
   }
 }

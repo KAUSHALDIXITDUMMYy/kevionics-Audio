@@ -12,6 +12,7 @@ import {
   endStreamSessionById, 
   deleteStreamSession, 
   endAllActiveStreams,
+  deleteAllStreams,
   type StreamSession 
 } from "@/lib/streaming"
 import { getUsersByRole, type UserProfile } from "@/lib/admin"
@@ -123,6 +124,35 @@ export function StreamManagement() {
       }
     } catch (err: any) {
       setError("Failed to end all streams")
+    } finally {
+      setActionLoading(null)
+    }
+  }
+
+  const handleDeleteAllStreams = async () => {
+    if (!confirm("⚠️ DANGER: Are you sure you want to PERMANENTLY DELETE ALL streams? This action CANNOT be undone and will delete all stream history!")) {
+      return
+    }
+
+    // Double confirmation for this destructive action
+    if (!confirm("This is your final warning! Type 'DELETE' if you understand that ALL streams will be permanently removed.")) {
+      return
+    }
+
+    setActionLoading("delete-all")
+    setError("")
+    setSuccess("")
+
+    try {
+      const result = await deleteAllStreams()
+      if (result.success) {
+        setSuccess(`Successfully deleted ${result.deletedCount} streams`)
+        await loadData()
+      } else {
+        setError(result.error || "Failed to delete all streams")
+      }
+    } catch (err: any) {
+      setError("Failed to delete all streams")
     } finally {
       setActionLoading(null)
     }
@@ -332,10 +362,27 @@ export function StreamManagement() {
               </CardTitle>
               <CardDescription>Complete history of all streams</CardDescription>
             </div>
-            <Button variant="outline" size="sm" onClick={loadData} disabled={loading}>
-              <RefreshCw className="h-4 w-4 mr-2" />
-              Refresh
-            </Button>
+            <div className="flex space-x-2">
+              <Button variant="outline" size="sm" onClick={loadData} disabled={loading}>
+                <RefreshCw className="h-4 w-4 mr-2" />
+                Refresh
+              </Button>
+              {allStreams.length > 0 && (
+                <Button 
+                  variant="destructive" 
+                  size="sm" 
+                  onClick={handleDeleteAllStreams}
+                  disabled={actionLoading === "delete-all"}
+                >
+                  {actionLoading === "delete-all" ? (
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                  ) : (
+                    <Trash2 className="h-4 w-4 mr-2" />
+                  )}
+                  Delete All Streams
+                </Button>
+              )}
+            </div>
           </div>
         </CardHeader>
         <CardContent>

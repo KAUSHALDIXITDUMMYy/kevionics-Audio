@@ -199,3 +199,24 @@ export const endAllActiveStreams = async () => {
     return { success: false, error: error.message }
   }
 }
+
+// Delete all streams (admin function - PERMANENT)
+export const deleteAllStreams = async () => {
+  try {
+    const streamsRef = collection(db, "streamSessions")
+    const querySnapshot = await getDocs(streamsRef)
+    
+    const deletePromises = querySnapshot.docs.map(async (streamDoc) => {
+      try {
+        await deleteDoc(doc(db, "streamSessions", streamDoc.id))
+      } catch (error) {
+        console.error(`Failed to delete stream ${streamDoc.id}:`, error)
+      }
+    })
+    
+    await Promise.all(deletePromises)
+    return { success: true, deletedCount: querySnapshot.docs.length }
+  } catch (error: any) {
+    return { success: false, error: error.message }
+  }
+}
