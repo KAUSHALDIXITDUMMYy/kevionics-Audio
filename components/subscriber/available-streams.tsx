@@ -48,20 +48,12 @@ export function AvailableStreams() {
   }
 
   const handleSelectStream = (permission: SubscriberPermission) => {
+    // Auto-join stream when selected - StreamViewer handles the connection
     setSelectedStream(permission)
   }
 
   const handleBackToList = () => {
     setSelectedStream(null)
-  }
-
-  const handleJoinStream = (permission: SubscriberPermission) => {
-    console.log("Joined stream:", permission.streamSession?.title)
-  }
-
-  const handleLeaveStream = () => {
-    // Stream left
-    console.log("Left stream")
   }
 
   if (loading) {
@@ -88,7 +80,7 @@ export function AvailableStreams() {
             Refresh
           </Button>
         </div>
-        <StreamViewer permission={selectedStream} onJoinStream={handleJoinStream} onLeaveStream={handleLeaveStream} />
+        <StreamViewer permission={selectedStream} onLeaveStream={handleBackToList} />
       </div>
     )
   }
@@ -101,7 +93,7 @@ export function AvailableStreams() {
         <div>
           <h2 className="text-2xl font-bold">Available Streams</h2>
           <p className="text-muted-foreground">
-            {permissions.length} stream{permissions.length !== 1 ? "s" : ""} available to you
+            {permissions.length} stream{permissions.length !== 1 ? "s" : ""} available - Click to instantly connect
           </p>
         </div>
         <Button variant="outline" onClick={loadStreams} disabled={refreshing}>
@@ -170,7 +162,7 @@ export function AvailableStreams() {
                 {/* Action Button */}
                 <Button onClick={() => handleSelectStream(permission)} className="w-full">
                   <Monitor className="h-4 w-4 mr-2" />
-                  Watch Stream
+                  Connect Instantly
                 </Button>
               </CardContent>
             </Card>

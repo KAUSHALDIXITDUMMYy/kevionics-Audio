@@ -51,12 +51,9 @@ export function RealTimeStreams() {
 
   const handleSelectStream = (stream: SubscriberPermission) => {
     console.log("[v0] Selecting stream:", stream.id)
-    // Toggle selection: clicking the same stream collapses the viewer
-    if (selectedStream?.id === stream.id) {
-      setSelectedStream(null)
-    } else {
-      setSelectedStream(stream)
-    }
+    // Simply switch to the new stream - no toggle behavior
+    // The StreamViewer will auto-leave the previous stream and auto-join the new one
+    setSelectedStream(stream)
   }
 
   const handleBackToList = () => {
@@ -131,7 +128,7 @@ export function RealTimeStreams() {
               </Badge>
             </div>
           </div>
-          <CardDescription>Your stream access is managed by administrators</CardDescription>
+          <CardDescription>Click any stream to instantly connect. Switch streams seamlessly with a single click.</CardDescription>
         </CardHeader>
       </Card>
 
@@ -163,22 +160,29 @@ export function RealTimeStreams() {
               {availableStreams.map((stream) => (
                 <Card
                   key={stream.id}
-                  className={`transition-shadow cursor-pointer ${
-                    selectedStream?.id === stream.id ? "ring-2 ring-primary" : "hover:shadow-lg"
+                  className={`transition-all cursor-pointer ${
+                    selectedStream?.id === stream.id 
+                      ? "ring-2 ring-primary shadow-lg bg-primary/5" 
+                      : "hover:shadow-lg hover:border-primary/50"
                   }`}
                   onClick={() => handleSelectStream(stream)}
                 >
                   <CardHeader>
                     <div className="flex items-start justify-between">
-                      <div className="space-y-2">
+                      <div className="space-y-2 flex-1">
                         <CardTitle className="flex items-center space-x-2">
                           <Badge variant="destructive" className="animate-pulse">
                             LIVE
                           </Badge>
-                          <span>{stream.streamSession?.title || "Untitled Stream"}</span>
+                          <span className="text-sm">{stream.streamSession?.title || "Untitled Stream"}</span>
                         </CardTitle>
-                        <CardDescription>Publisher: {stream.publisherName}</CardDescription>
+                        <CardDescription className="text-xs">Publisher: {stream.publisherName}</CardDescription>
                       </div>
+                      {selectedStream?.id === stream.id && (
+                        <Badge variant="default" className="ml-2">
+                          Active
+                        </Badge>
+                      )}
                     </div>
                   </CardHeader>
                 </Card>

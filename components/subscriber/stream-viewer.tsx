@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { agoraManager } from "@/lib/agora"
 import type { SubscriberPermission } from "@/lib/subscriber"
-import { Play, Square, Volume2, VolumeX, Video, Users, Clock, Monitor } from "lucide-react"
+import { Volume2, VolumeX, Video, Users, Clock, Monitor, Loader2 } from "lucide-react"
 
 interface StreamViewerProps {
   permission: SubscriberPermission
@@ -22,49 +22,63 @@ export function StreamViewer({ permission, onJoinStream, onLeaveStream }: Stream
   const [audioEnabled, setAudioEnabled] = useState(false)
   const [videoEnabled, setVideoEnabled] = useState(false)
   const jitsiContainerRef = useRef<HTMLDivElement>(null)
+  const currentRoomRef = useRef<string | null>(null)
 
+  // Auto-join stream when permission changes
   useEffect(() => {
+    if (!permission.streamSession || !jitsiContainerRef.current) return
+
+    const newRoomId = permission.streamSession.roomId
+
+    // If we're already in the same room, don't rejoin
+    if (currentRoomRef.current === newRoomId && isConnected) {
+      return
+    }
+
+    // Auto-join the new stream
+    const joinStream = async () => {
+      setLoading(true)
+      setError("")
+
+      try {
+        // Leave current stream if connected
+        if (isConnected && currentRoomRef.current) {
+          await agoraManager.leave()
+          setIsConnected(false)
+        }
+
+        // Join new stream
+        await agoraManager.join({
+          channelName: newRoomId,
+          role: "audience",
+          container: jitsiContainerRef.current!,
+          width: "100%",
+          height: 500,
+        })
+
+        currentRoomRef.current = newRoomId
+        setIsConnected(true)
+        setAudioEnabled(true)
+        setVideoEnabled(false)
+        onJoinStream?.(permission)
+      } catch (err: any) {
+        setError(err.message || "Failed to join stream")
+        currentRoomRef.current = null
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    joinStream()
+
     return () => {
       // Cleanup on unmount
       if (isConnected) {
         agoraManager.leave()
+        currentRoomRef.current = null
       }
     }
-  }, [isConnected])
-
-  const handleJoinStream = async () => {
-    if (!permission.streamSession || !jitsiContainerRef.current) return
-
-    setLoading(true)
-    setError("")
-
-    try {
-      await agoraManager.join({
-        channelName: permission.streamSession.roomId,
-        role: "audience",
-        container: jitsiContainerRef.current,
-        width: "100%",
-        height: 500,
-      })
-
-      setIsConnected(true)
-      setLoading(false)
-      onJoinStream?.(permission)
-
-      setAudioEnabled(true) // Start with audio enabled for audio-only mode
-      setVideoEnabled(false)
-    } catch (err: any) {
-      setError(err.message || "Failed to join stream")
-      setLoading(false)
-    }
-  }
-
-  const handleLeaveStream = () => {
-    agoraManager.leave()
-    setIsConnected(false)
-    setLoading(false)
-    onLeaveStream?.()
-  }
+  }, [permission.streamSession?.roomId])
 
   const handleToggleAudio = async () => {
     if (!permission.allowAudio) return
@@ -115,17 +129,17 @@ export function StreamViewer({ permission, onJoinStream, onLeaveStream }: Stream
             </CardDescription>
           </div>
           <div className="flex items-center space-x-2">
-            {!isConnected ? (
-              <Button onClick={handleJoinStream} disabled={loading}>
-                <Play className="h-4 w-4 mr-2" />
-                {loading ? "Joining..." : "Join Stream"}
-              </Button>
-            ) : (
-              <Button variant="destructive" onClick={handleLeaveStream}>
-                <Square className="h-4 w-4 mr-2" />
-                Leave Stream
-              </Button>
-            )}
+            {loading ? (
+              <Badge variant="outline" className="flex items-center space-x-2">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                <span>Connecting...</span>
+              </Badge>
+            ) : isConnected ? (
+              <Badge variant="outline" className="flex items-center space-x-2">
+                <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                <span>Connected</span>
+              </Badge>
+            ) : null}
           </div>
         </div>
       </CardHeader>
@@ -150,27 +164,21 @@ export function StreamViewer({ permission, onJoinStream, onLeaveStream }: Stream
         </div>
 
         {/* Stream controls for connected users */}
-        {isConnected && (
+        {isConnected && permission.allowAudio && (
           <div className="flex items-center space-x-2">
-            {permission.allowAudio && (
-              <Button variant={audioEnabled ? "default" : "destructive"} onClick={handleToggleAudio} size="sm">
-                {audioEnabled ? (
-                  <>
-                    <Volume2 className="h-4 w-4 mr-2" />
-                    Audio On
-                  </>
-                ) : (
-                  <>
-                    <VolumeX className="h-4 w-4 mr-2" />
-                    Audio Off
-                  </>
-                )}
-              </Button>
-            )}
-            <Badge variant="outline" className="flex items-center space-x-1">
-              <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-              <span>Connected</span>
-            </Badge>
+            <Button variant={audioEnabled ? "default" : "destructive"} onClick={handleToggleAudio} size="sm">
+              {audioEnabled ? (
+                <>
+                  <Volume2 className="h-4 w-4 mr-2" />
+                  Audio On
+                </>
+              ) : (
+                <>
+                  <VolumeX className="h-4 w-4 mr-2" />
+                  Audio Off
+                </>
+              )}
+            </Button>
           </div>
         )}
 
@@ -183,10 +191,17 @@ export function StreamViewer({ permission, onJoinStream, onLeaveStream }: Stream
 
         {/* Audio-only Stream Container */}
         <div ref={jitsiContainerRef} className="w-full h-[200px] bg-muted rounded-lg flex items-center justify-center">
-          {!isConnected && (
+          {loading && (
+            <div className="text-center text-muted-foreground">
+              <Loader2 className="h-12 w-12 mx-auto mb-4 animate-spin text-primary" />
+              <p className="font-medium">Connecting to stream...</p>
+              <p className="text-sm mt-2">Please wait</p>
+            </div>
+          )}
+          {!loading && !isConnected && (
             <div className="text-center text-muted-foreground">
               <Volume2 className="h-12 w-12 mx-auto mb-4" />
-              <p>Click "Join Stream" to start listening</p>
+              <p>Auto-connecting to stream...</p>
               <div className="mt-4 space-y-1">
                 <p className="text-xs">Audio-only mode:</p>
                 <div className="flex items-center justify-center space-x-4 text-xs">
@@ -200,10 +215,10 @@ export function StreamViewer({ permission, onJoinStream, onLeaveStream }: Stream
               </div>
             </div>
           )}
-          {isConnected && (
+          {!loading && isConnected && (
             <div className="text-center text-muted-foreground">
               <Volume2 className="h-12 w-12 mx-auto mb-4 text-green-600" />
-              <p>Listening to shared screen audio</p>
+              <p className="font-medium text-green-600">Listening to shared screen audio</p>
               <p className="text-sm mt-2">Audio-only mode active</p>
             </div>
           )}
