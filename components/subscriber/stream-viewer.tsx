@@ -35,19 +35,15 @@ export function StreamViewer({ permission, onJoinStream, onLeaveStream }: Stream
       return
     }
 
-    // Auto-join the new stream
+    // Auto-join the new stream (join() handles leaving previous stream automatically)
     const joinStream = async () => {
       setLoading(true)
       setError("")
 
       try {
-        // Leave current stream if connected
-        if (isConnected && currentRoomRef.current) {
-          await agoraManager.leave()
-          setIsConnected(false)
-        }
-
-        // Join new stream
+        console.log("[StreamViewer] Joining stream:", newRoomId)
+        
+        // Join new stream - this will automatically leave the previous one
         await agoraManager.join({
           channelName: newRoomId,
           role: "audience",
@@ -61,9 +57,13 @@ export function StreamViewer({ permission, onJoinStream, onLeaveStream }: Stream
         setAudioEnabled(true)
         setVideoEnabled(false)
         onJoinStream?.(permission)
+        
+        console.log("[StreamViewer] Successfully connected to:", newRoomId)
       } catch (err: any) {
+        console.error("[StreamViewer] Failed to join stream:", err)
         setError(err.message || "Failed to join stream")
         currentRoomRef.current = null
+        setIsConnected(false)
       } finally {
         setLoading(false)
       }
@@ -72,10 +72,12 @@ export function StreamViewer({ permission, onJoinStream, onLeaveStream }: Stream
     joinStream()
 
     return () => {
-      // Cleanup on unmount
-      if (isConnected) {
+      // Cleanup on unmount - only leave if we're actually connected
+      console.log("[StreamViewer] Component unmounting, cleaning up...")
+      if (currentRoomRef.current) {
         agoraManager.leave()
         currentRoomRef.current = null
+        setIsConnected(false)
       }
     }
   }, [permission.streamSession?.roomId])
