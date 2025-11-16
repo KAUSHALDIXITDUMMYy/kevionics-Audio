@@ -32,9 +32,7 @@ export function StreamControls({ onStreamStart, onStreamEnd }: StreamControlsPro
   // Stream setup form
   const [streamTitle, setStreamTitle] = useState("")
   const [streamDescription, setStreamDescription] = useState("")
-  const [gameName, setGameName] = useState("")
-  const [league, setLeague] = useState("")
-  const [match, setMatch] = useState("")
+
 
   const [jitsiContainer, setJitsiContainer] = useState<HTMLDivElement | null>(null)
 
@@ -62,10 +60,7 @@ export function StreamControls({ onStreamStart, onStreamEnd }: StreamControlsPro
         roomId,
         isActive: true,
         title: streamTitle || "Untitled Stream",
-        description: streamDescription,
-        gameName: gameName || undefined,
-        league: league || undefined,
-        match: match || undefined,
+				description: streamDescription,
       })
 
       if (!sessionResult.success) {
@@ -110,9 +105,6 @@ export function StreamControls({ onStreamStart, onStreamEnd }: StreamControlsPro
       setCurrentSession(null)
       setStreamTitle("")
       setStreamDescription("")
-      setGameName("")
-      setLeague("")
-      setMatch("")
       setSuccess("Stream ended successfully!")
       onStreamEnd?.()
     } catch (err: any) {
@@ -159,7 +151,7 @@ export function StreamControls({ onStreamStart, onStreamEnd }: StreamControlsPro
         <Card>
           <CardHeader>
             <CardTitle>Start New Stream</CardTitle>
-            <CardDescription>Configure your stream settings and start broadcasting</CardDescription>
+				<CardDescription>Enter a title and optional description, then start streaming</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             {error && (
@@ -195,38 +187,6 @@ export function StreamControls({ onStreamStart, onStreamEnd }: StreamControlsPro
               />
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="gameName">Game Name</Label>
-                <Input
-                  id="gameName"
-                  value={gameName}
-                  onChange={(e) => setGameName(e.target.value)}
-                  placeholder="e.g., League of Legends"
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="league">League</Label>
-                <Input
-                  id="league"
-                  value={league}
-                  onChange={(e) => setLeague(e.target.value)}
-                  placeholder="e.g., LCS, LEC, Worlds"
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="match">Match</Label>
-                <Input
-                  id="match"
-                  value={match}
-                  onChange={(e) => setMatch(e.target.value)}
-                  placeholder="e.g., Team A vs Team B"
-                />
-              </div>
-            </div>
-
             <Button onClick={handleStartStream} disabled={loading} className="w-full">
               <Play className="h-4 w-4 mr-2" />
               {loading ? "Starting Stream..." : "Start Stream"}
@@ -257,13 +217,6 @@ export function StreamControls({ onStreamStart, onStreamEnd }: StreamControlsPro
                     <span>Room: {currentSession.roomId}</span>
                   </span>
                 </CardDescription>
-                {(currentSession.gameName || currentSession.league || currentSession.match) && (
-                  <div className="flex flex-wrap gap-2 mt-2">
-                    {currentSession.gameName && <Badge variant="outline">Game: {currentSession.gameName}</Badge>}
-                    {currentSession.league && <Badge variant="outline">League: {currentSession.league}</Badge>}
-                    {currentSession.match && <Badge variant="outline">Match: {currentSession.match}</Badge>}
-                  </div>
-                )}
               </div>
               <Button variant="destructive" onClick={handleEndStream} disabled={loading}>
                 <Square className="h-4 w-4 mr-2" />
