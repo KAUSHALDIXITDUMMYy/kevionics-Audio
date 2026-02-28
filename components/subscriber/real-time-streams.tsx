@@ -1,11 +1,11 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { useAuth } from "@/hooks/use-auth"
-import { getAvailableStreams } from "@/lib/subscriber"
+import { subscribeToAvailableStreams, userCache } from "@/lib/subscriber"
 import type { SubscriberPermission } from "@/lib/subscriber"
 import { StreamViewer } from "./stream-viewer"
 import { Monitor, Activity, Gamepad2, Trophy, Users } from "lucide-react"
@@ -16,37 +16,48 @@ export function RealTimeStreams() {
   const [selectedStream, setSelectedStream] = useState<SubscriberPermission | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
+  const isFirstLoad = useRef(true)
 
   useEffect(() => {
     if (!user) return
 
-    const loadStreams = async () => {
-      try {
-        console.log("[v0] Loading streams for user:", user.uid)
-        const streams = await getAvailableStreams(user.uid)
-        console.log("[v0] Available streams loaded:", streams.length)
+    console.log("[v0] Setting up real-time subscription for user:", user.uid)
+    
+    // Start user cache real-time sync (prevents stale user data, uses single listener)
+    userCache.startRealtimeSync()
+
+    // Subscribe to real-time updates (NO MORE POLLING!)
+    const unsubscribe = subscribeToAvailableStreams(user.uid, {
+      onStreamsUpdate: (streams) => {
+        console.log("[v0] Real-time streams update:", streams.length)
         setAvailableStreams(streams)
+        
         // Keep selected stream in sync with latest data or clear if gone
         setSelectedStream((current) => {
           if (!current) return current
           const updated = streams.find((s) => s.id === current.id) || null
           return updated
         })
+        
+        if (isFirstLoad.current) {
+          setLoading(false)
+          isFirstLoad.current = false
+        }
         setError("")
-      } catch (err: any) {
-        console.error("[v0] Error loading streams:", err)
+      },
+      onError: (err) => {
+        console.error("[v0] Real-time subscription error:", err)
         setError("Failed to load streams")
-      } finally {
         setLoading(false)
       }
+    })
+
+    // Cleanup on unmount
+    return () => {
+      console.log("[v0] Cleaning up real-time subscription")
+      unsubscribe()
+      userCache.stopRealtimeSync()
     }
-
-    loadStreams()
-
-    // Set up polling for real-time updates
-    const interval = setInterval(loadStreams, 5000) // Poll every 5 seconds
-
-    return () => clearInterval(interval)
   }, [user])
 
   const handleSelectStream = (stream: SubscriberPermission) => {
