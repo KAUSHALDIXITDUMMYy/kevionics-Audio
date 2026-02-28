@@ -21,6 +21,7 @@ export function StreamViewer({ permission, onJoinStream, onLeaveStream }: Stream
   const [error, setError] = useState("")
   const [audioEnabled, setAudioEnabled] = useState(false)
   const [videoEnabled, setVideoEnabled] = useState(false)
+  const [hasVideoTrack, setHasVideoTrack] = useState(false)
   const jitsiContainerRef = useRef<HTMLDivElement>(null)
   const currentRoomRef = useRef<string | null>(null)
 
@@ -56,9 +57,17 @@ export function StreamViewer({ permission, onJoinStream, onLeaveStream }: Stream
         setIsConnected(true)
         setAudioEnabled(true)
         setVideoEnabled(false)
+        setHasVideoTrack(false) // Will be updated when tracks are published
         onJoinStream?.(permission)
         
         console.log("[StreamViewer] Successfully connected to:", newRoomId)
+        
+        // Set up listeners for when tracks are published (they may publish after joining)
+        // Note: The agora manager already handles this, but we track state here for UI
+        setTimeout(() => {
+          // Check if video track exists after a short delay
+          // This is handled by the agora manager's event listeners
+        }, 1000)
       } catch (err: any) {
         console.error("[StreamViewer] Failed to join stream:", err)
         setError(err.message || "Failed to join stream")
@@ -87,12 +96,33 @@ export function StreamViewer({ permission, onJoinStream, onLeaveStream }: Stream
 
     try {
       // Toggle audio playback for the subscriber
-      setAudioEnabled(!audioEnabled)
-      // Note: In audio-only mode, this controls whether the subscriber hears the shared screen audio
+      const newAudioState = !audioEnabled
+      setAudioEnabled(newAudioState)
+      
+      // Note: The agora manager handles audio playback automatically through event listeners
+      // This toggle is primarily for UI state tracking
+      // If we need explicit control, we can add methods to agoraManager later
     } catch (err: any) {
       setError("Failed to toggle audio")
     }
   }
+  
+  // Check for video tracks periodically
+  useEffect(() => {
+    if (isConnected) {
+      const checkVideoTracks = () => {
+        const hasVideo = agoraManager.hasVideoTrack()
+        setHasVideoTrack(hasVideo)
+      }
+      
+      const interval = setInterval(checkVideoTracks, 1000)
+      checkVideoTracks() // Initial check
+      
+      return () => clearInterval(interval)
+    } else {
+      setHasVideoTrack(false)
+    }
+  }, [isConnected])
 
   if (!permission.streamSession) {
     return (
@@ -153,11 +183,20 @@ export function StreamViewer({ permission, onJoinStream, onLeaveStream }: Stream
           </Alert>
         )}
 
-        {/* Audio-only mode indicators */}
+        {/* Streaming mode indicators */}
         <div className="flex items-center space-x-4 p-3 bg-muted rounded-lg">
           <div className="flex items-center space-x-2">
-            <Video className="h-4 w-4 text-orange-600" />
-            <span className="text-sm">Video: Audio-only mode</span>
+            {hasVideoTrack ? (
+              <>
+                <Video className="h-4 w-4 text-green-600" />
+                <span className="text-sm">Video: Enabled</span>
+              </>
+            ) : (
+              <>
+                <Video className="h-4 w-4 text-orange-600" />
+                <span className="text-sm">Video: Audio-only mode</span>
+              </>
+            )}
           </div>
           <div className="flex items-center space-x-2">
             <Volume2 className={`h-4 w-4 ${permission.allowAudio ? "text-green-600" : "text-gray-400"}`} />
@@ -191,8 +230,8 @@ export function StreamViewer({ permission, onJoinStream, onLeaveStream }: Stream
           </div>
         )}
 
-        {/* Audio-only Stream Container */}
-        <div ref={jitsiContainerRef} className="w-full h-[200px] bg-muted rounded-lg flex items-center justify-center">
+        {/* Stream Container */}
+        <div ref={jitsiContainerRef} className={`w-full ${hasVideoTrack ? 'h-[500px]' : 'h-[200px]'} bg-muted rounded-lg flex items-center justify-center overflow-hidden`}>
           {loading && (
             <div className="text-center text-muted-foreground">
               <Loader2 className="h-12 w-12 mx-auto mb-4 animate-spin text-primary" />
@@ -202,13 +241,17 @@ export function StreamViewer({ permission, onJoinStream, onLeaveStream }: Stream
           )}
           {!loading && !isConnected && (
             <div className="text-center text-muted-foreground">
-              <Volume2 className="h-12 w-12 mx-auto mb-4" />
+              {hasVideoTrack ? (
+                <Video className="h-12 w-12 mx-auto mb-4" />
+              ) : (
+                <Volume2 className="h-12 w-12 mx-auto mb-4" />
+              )}
               <p>Auto-connecting to stream...</p>
               <div className="mt-4 space-y-1">
-                <p className="text-xs">Audio-only mode:</p>
+                <p className="text-xs">Waiting for stream...</p>
                 <div className="flex items-center justify-center space-x-4 text-xs">
-                  <span className="text-orange-600">
-                    Video: ✗ (Audio-only)
+                  <span className={hasVideoTrack ? "text-green-600" : "text-orange-600"}>
+                    Video: {hasVideoTrack ? "✓" : "✗"}
                   </span>
                   <span className={permission.allowAudio ? "text-green-600" : "text-red-600"}>
                     Audio: {permission.allowAudio ? "✓" : "✗"}
@@ -217,11 +260,20 @@ export function StreamViewer({ permission, onJoinStream, onLeaveStream }: Stream
               </div>
             </div>
           )}
-          {!loading && isConnected && (
+          {!loading && isConnected && !hasVideoTrack && (
             <div className="text-center text-muted-foreground">
               <Volume2 className="h-12 w-12 mx-auto mb-4 text-green-600" />
               <p className="font-medium text-green-600">Listening to shared screen audio</p>
               <p className="text-sm mt-2">Audio-only mode active</p>
+            </div>
+          )}
+          {!loading && isConnected && hasVideoTrack && (
+            <div className="w-full h-full flex items-center justify-center">
+              <div className="text-center text-muted-foreground">
+                <Video className="h-12 w-12 mx-auto mb-4 text-green-600" />
+                <p className="font-medium text-green-600">Video stream active</p>
+                <p className="text-sm mt-2">Video will appear here when publisher shares screen</p>
+              </div>
             </div>
           )}
         </div>

@@ -11,6 +11,7 @@ export interface AgoraJoinConfig {
   container: HTMLElement
   width?: string | number
   height?: string | number
+  enableVideo?: boolean // New: enable video streaming
 }
 
 export class AgoraManager {
@@ -20,6 +21,7 @@ export class AgoraManager {
   private screenVideoTrack: ILocalVideoTrack | null = null
   private screenAudioTrack: ILocalAudioTrack | null = null
   private isJoining: boolean = false
+  private videoContainer: HTMLElement | null = null // Store container for video playback
 
   private async getAgora() {
     if (typeof window === "undefined") throw new Error("Agora can only be used in the browser")
@@ -90,18 +92,28 @@ export class AgoraManager {
         bitrate: 140
       })
 
+      // Store container reference for video playback (subscribers)
+      this.videoContainer = config.container
+
       await this.client.join(appId, channelName, token, agoraUid)
       console.log("[Agora] Successfully joined channel:", channelName)
 
       if (role === "publisher") {
-        await this.startScreenShare(config.container)
+        const enableVideo = config.enableVideo ?? true // Default to video enabled
+        await this.startScreenShare(config.container, { 
+          enableVideo,
+          withSystemAudio: true,
+          fullScreen: true
+        })
       } else {
-        // Audience: subscribe only to audio tracks with low-latency optimizations
+        // Audience: subscribe to both audio and video tracks
         this.client.on("user-published", async (user, mediaType) => {
           console.log("[Agora] user-published:", user.uid, mediaType)
+          
+          // Subscribe to the track
+          await this.client!.subscribe(user, mediaType)
+          
           if (mediaType === "audio") {
-            // Subscribe with low-latency settings
-            await this.client!.subscribe(user, mediaType)
             const remoteAudioTrack = user.audioTrack as IRemoteAudioTrack
             
             // Set audio playback with minimal buffer for lowest latency
@@ -110,8 +122,17 @@ export class AgoraManager {
             
             // Set volume to ensure clear audio
             remoteAudioTrack.setVolume(100)
+          } else if (mediaType === "video") {
+            const remoteVideoTrack = user.videoTrack as IRemoteVideoTrack
+            
+            // Play video in the stored container
+            console.log("[Agora] Playing video from user:", user.uid)
+            if (this.videoContainer) {
+              remoteVideoTrack.play(this.videoContainer)
+            } else {
+              console.error("[Agora] No container available for video playback")
+            }
           }
-          // Skip video tracks - subscribers only hear audio
         })
 
         this.client.on("user-unpublished", async (user, mediaType) => {
@@ -119,6 +140,9 @@ export class AgoraManager {
           if (mediaType === "audio" && user.audioTrack) {
             // Stop the audio track
             user.audioTrack.stop()
+          } else if (mediaType === "video" && user.videoTrack) {
+            // Stop the video track
+            user.videoTrack.stop()
           }
         })
       }
@@ -196,79 +220,137 @@ export class AgoraManager {
       this.localVideo = null
       this.screenVideoTrack = null
       this.screenAudioTrack = null
+      this.videoContainer = null
       console.log("[Agora] Leave cleanup complete")
     }
   }
 
   async startScreenShare(
     container: HTMLElement,
-    options?: { fullScreen?: boolean; withSystemAudio?: boolean; preferFPS60?: boolean }
+    options?: { fullScreen?: boolean; withSystemAudio?: boolean; preferFPS60?: boolean; enableVideo?: boolean }
   ) {
     if (!this.client) throw new Error("Client not joined")
     if (this.screenVideoTrack || this.screenAudioTrack) return
 
     const fullScreen = options?.fullScreen ?? true
     const withSystemAudio = options?.withSystemAudio ?? true
+    const enableVideo = options?.enableVideo ?? true // Default to video enabled
 
     const AgoraRTC = await this.getAgora()
     
     try {
-      console.log("[Agora] Creating screen share with HIGH-QUALITY audio for low latency...")
+      console.log("[Agora] Creating screen share with video:", enableVideo, "and audio:", withSystemAudio)
       
-      // Create screen capture with optimized audio settings
-      const screenTracks = await AgoraRTC.createScreenVideoTrack(
-        {
-          // Minimal video encoding since we only need audio
-          encoderConfig: "480p_1",  // Lowest video quality to reduce overhead
-          optimizationMode: "detail" as const,  // Better for static content, less CPU
-          screenSourceType: fullScreen ? ("screen" as const) : ("window" as const),
-        },
-        withSystemAudio ? "auto" : "disable"
-      )
-      
-      if (Array.isArray(screenTracks)) {
-        // We got both video and audio tracks
-        this.screenVideoTrack = screenTracks[0]
-        this.screenAudioTrack = screenTracks[1]
-        
-        console.log("[Agora] Got both video and audio tracks")
-        console.log("[Agora] Configuring HIGH-QUALITY audio with low latency...")
-        
-        // Configure audio track for high quality and low latency
-        try {
-          // Set audio encoding configuration for high quality
-          // Higher bitrate = better quality, 48kHz sample rate for premium audio
-          (this.screenAudioTrack as any).setAudioEncoderConfiguration({
-            sampleRate: 48000,      // 48kHz for studio-quality audio
-            stereo: true,            // Stereo for better sound
-            bitrate: 128             // 128kbps for high-quality audio
-          })
-        } catch (configError) {
-          console.log("[Agora] Note: Audio config not fully supported, using defaults")
-        }
-        
-        console.log("[Agora] Publishing HIGH-QUALITY audio track...")
-        
-        // CRITICAL: Publish ONLY the audio track with low-latency priority
-        await this.client.publish([this.screenAudioTrack] as any)
-        
-        console.log("[Agora] High-quality audio track published successfully")
-      } else {
-        // Only got video track
-        this.screenVideoTrack = screenTracks
-        console.log("[Agora] Only got video track, creating high-quality microphone track...")
-        // Create high-quality microphone track with optimized settings
-        this.localAudio = await AgoraRTC.createMicrophoneAudioTrack({
-          encoderConfig: {
-            sampleRate: 48000,      // 48kHz sample rate
-            stereo: true,            // Stereo audio
-            bitrate: 128             // 128kbps bitrate
+      if (enableVideo) {
+        // Create screen capture with both video and audio
+        const screenTracks = await AgoraRTC.createScreenVideoTrack(
+          {
+            encoderConfig: "1080p_1",  // High quality video
+            optimizationMode: "motion" as const,  // Better for screen sharing with motion
+            screenSourceType: fullScreen ? ("screen" as const) : ("window" as const),
           },
-          AEC: true,                 // Acoustic Echo Cancellation
-          AGC: true,                 // Automatic Gain Control
-          ANS: true                  // Automatic Noise Suppression
-        })
-        await this.client.publish([this.localAudio] as any)
+          withSystemAudio ? "auto" : "disable"
+        )
+        
+        if (Array.isArray(screenTracks)) {
+          // We got both video and audio tracks
+          this.screenVideoTrack = screenTracks[0]
+          this.screenAudioTrack = screenTracks[1]
+          
+          console.log("[Agora] Got both video and audio tracks")
+          
+          // Configure audio track for high quality
+          try {
+            (this.screenAudioTrack as any).setAudioEncoderConfiguration({
+              sampleRate: 48000,
+              stereo: true,
+              bitrate: 128
+            })
+          } catch (configError) {
+            console.log("[Agora] Note: Audio config not fully supported, using defaults")
+          }
+          
+          // Play video in container
+          this.screenVideoTrack.play(container)
+          
+          // Publish both video and audio tracks
+          await this.client.publish([this.screenVideoTrack, this.screenAudioTrack] as any)
+          
+          console.log("[Agora] Published video and audio tracks successfully")
+        } else {
+          // Only got video track (no system audio)
+          this.screenVideoTrack = screenTracks
+          this.screenVideoTrack.play(container)
+          
+          // Create microphone audio track
+          this.localAudio = await AgoraRTC.createMicrophoneAudioTrack({
+            encoderConfig: {
+              sampleRate: 48000,
+              stereo: true,
+              bitrate: 128
+            },
+            AEC: true,
+            AGC: true,
+            ANS: true
+          })
+          
+          await this.client.publish([this.screenVideoTrack, this.localAudio] as any)
+          console.log("[Agora] Published video and microphone audio tracks")
+        }
+      } else {
+        // Audio-only mode: create screen share with audio but don't publish video
+        const screenTracks = await AgoraRTC.createScreenVideoTrack(
+          {
+            encoderConfig: "480p_1",  // Low quality since we won't publish video
+            optimizationMode: "detail" as const,
+            screenSourceType: fullScreen ? ("screen" as const) : ("window" as const),
+          },
+          withSystemAudio ? "auto" : "disable"
+        )
+        
+        if (Array.isArray(screenTracks)) {
+          // We got both video and audio tracks, but only use audio
+          this.screenVideoTrack = screenTracks[0]
+          this.screenAudioTrack = screenTracks[1]
+          
+          // Close video track immediately (we don't need it)
+          this.screenVideoTrack.stop()
+          this.screenVideoTrack.close()
+          this.screenVideoTrack = null
+          
+          // Configure and publish only audio
+          try {
+            (this.screenAudioTrack as any).setAudioEncoderConfiguration({
+              sampleRate: 48000,
+              stereo: true,
+              bitrate: 128
+            })
+          } catch (configError) {
+            console.log("[Agora] Note: Audio config not fully supported, using defaults")
+          }
+          
+          await this.client.publish([this.screenAudioTrack] as any)
+          console.log("[Agora] Published audio-only track successfully")
+        } else {
+          // Only got video track, create microphone audio
+          this.screenVideoTrack = screenTracks
+          this.screenVideoTrack.stop()
+          this.screenVideoTrack.close()
+          this.screenVideoTrack = null
+          
+          this.localAudio = await AgoraRTC.createMicrophoneAudioTrack({
+            encoderConfig: {
+              sampleRate: 48000,
+              stereo: true,
+              bitrate: 128
+            },
+            AEC: true,
+            AGC: true,
+            ANS: true
+          })
+          await this.client.publish([this.localAudio] as any)
+          console.log("[Agora] Published microphone audio track (audio-only mode)")
+        }
       }
     } catch (error) {
       console.error("[Agora] Screen share failed:", error)
@@ -298,9 +380,21 @@ export class AgoraManager {
     if (!this.client) return
     
     try {
-      // Unpublish audio track
+      // Unpublish both video and audio tracks
+      const tracksToUnpublish: any[] = []
+      if (this.screenVideoTrack) tracksToUnpublish.push(this.screenVideoTrack)
+      if (this.screenAudioTrack) tracksToUnpublish.push(this.screenAudioTrack)
+      
+      if (tracksToUnpublish.length > 0) {
+        await this.client.unpublish(tracksToUnpublish)
+      }
+    } catch (e) {
+      console.error("[Agora] Error unpublishing screen tracks:", e)
+    }
+    
+    try {
+      // Stop and close audio track
       if (this.screenAudioTrack) {
-        await this.client.unpublish([this.screenAudioTrack])
         this.screenAudioTrack.stop()
         this.screenAudioTrack.close()
         this.screenAudioTrack = null
@@ -310,7 +404,7 @@ export class AgoraManager {
     }
     
     try {
-      // Close video track (wasn't published)
+      // Stop and close video track
       if (this.screenVideoTrack) {
         this.screenVideoTrack.stop()
         this.screenVideoTrack.close()
@@ -318,6 +412,25 @@ export class AgoraManager {
       }
     } catch (e) {
       console.error("[Agora] Error closing screen video:", e)
+    }
+  }
+  
+  async enableVideo() {
+    if (!this.client) throw new Error("Client not joined")
+    // Note: Video is enabled when screen share starts, but you can add logic here to enable video mid-stream if needed
+    throw new Error("Video must be enabled when starting screen share")
+  }
+
+  async disableVideo() {
+    if (!this.client || !this.screenVideoTrack) return
+    try {
+      await this.client.unpublish([this.screenVideoTrack])
+      this.screenVideoTrack.stop()
+      this.screenVideoTrack.close()
+      this.screenVideoTrack = null
+      console.log("[Agora] Video disabled successfully")
+    } catch (e) {
+      console.error("[Agora] Error disabling video:", e)
     }
   }
 
@@ -352,6 +465,19 @@ export class AgoraManager {
       await this.localAudio.setEnabled(false)
       await this.client.unpublish([this.localAudio] as any)
     } catch {}
+  }
+
+  hasVideoTrack(): boolean {
+    if (!this.client) return false
+    const remoteUsers = this.client.remoteUsers
+    return remoteUsers.some(user => user.videoTrack && user.hasVideo)
+  }
+
+  getRemoteVideoTrack() {
+    if (!this.client) return null
+    const remoteUsers = this.client.remoteUsers
+    const userWithVideo = remoteUsers.find(user => user.videoTrack && user.hasVideo)
+    return userWithVideo?.videoTrack || null
   }
 }
 
